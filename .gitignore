@@ -1,0 +1,14 @@
+build/
+dist/
+.tools/
+.deps/
+.venv/
+__pycache__/
+*.rdc
+*.dxbc
+*.cso
+*.pdb
+*.dmp
+*.log
+backups/
+private/

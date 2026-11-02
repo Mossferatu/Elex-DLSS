@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build ELEX DLSS probe",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\build.ps1",
+				"-Zig",
+				"C:\\Users\\intel\\AppData\\Local\\Temp\\vscode-agent-codex-sandbox-QqmegG\\zig\\zig-x86_64-windows-0.15.2\\zig.exe"
+			],
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}
