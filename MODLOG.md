@@ -183,3 +183,22 @@ Only install a concrete reviewed prototype after the required confirmation.
   template matches; README explains that editing it does not update the install.
 - Rollback dry run passed. Game closed normally after final checks. No active
   gameplay test or required approval remains pending.
+
+## GitHub release automation (2026-11-02)
+
+- Added `.github/workflows/release.yml`: release/published and manual build-only
+  triggers. Windows2022 builds, verifies packages, saves an artifact; a separate
+  contents-write job attaches exact Windows/source ZIPs and SHA256SUMS.
+- Pinned action SHAs, Zig0.15.2 SHA256 and NVIDIA SDK commit. No game/RTX runtime
+  test on hosted runners; installer fixtures and archive verification run there.
+- Release tags control the generated DLL version and package names. Supports
+  v-prefixed tags and prereleases. Standalone packaging checks the build version.
+- Clean-game installation now supported; prior known graphics DLL remains
+  optional and is restored on rollback. Unknown wrappers remain rejected.
+  Fresh user configs without an explicit AA override are handled.
+- Local validation: actionlint1.7.12 clean; PowerShell/Python syntax clean;
+  clean/existing/legacy/conflict/failure/rollback fixture tests pass; complete
+  native build and verified packages for0.1.1-ci.1 produced successfully.
+- GitHub remote access failed twice with 'could not read Username'; normal and
+  escalated shell have no credential helper. No remote workflow run or release
+  has been created. Changes can be pushed from an authenticated Git client.

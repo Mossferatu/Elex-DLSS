@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "ngx_backend.h"
+#include "../build/version.h"
 #include <stdio.h>
 #include <wchar.h>
 #include <math.h>
@@ -78,7 +79,7 @@ ElexNgx *elex_ngx_open(ID3D11Device *device, const wchar_t *runtime_dir,
     common.LoggingInfo.MinimumLoggingLevel = NVSDK_NGX_LOGGING_LEVEL_ON;
     common.LoggingInfo.DisableOtherLoggingSinks = true;
     NVSDK_NGX_Result result = init("f350c55b-833b-46f2-9234-f451d710b2cb", NVSDK_NGX_ENGINE_TYPE_CUSTOM,
-        "Elex-DLSS-0.1", data_dir, device, NVSDK_NGX_Version_API, &common);
+        "Elex-DLSS-" ELEX_DLSS_VERSION, data_dir, device, NVSDK_NGX_Version_API, &common);
     log("NGX initialization: 0x%08x", result);
     if (NVSDK_NGX_FAILED(result)) goto fail;
     n->initialized = true;

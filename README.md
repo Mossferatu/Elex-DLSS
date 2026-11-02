@@ -1,4 +1,4 @@
-# ELEX native DLSS 0.1.0
+# ELEX native DLSS
 
 Unofficial native D3D11 integration of NVIDIA DLSS Super Resolution and DLAA for
 ELEX, with the existing cloud/water flicker corrections included.
@@ -28,7 +28,8 @@ SHA256 `7fe4f4c5a463f7b428ef74d8fe07445f734ff0dc0ad1005ed50cab34bc7f0fd5`.
 Test hardware: RTX 5090, driver 621.01, Windows 11, D3D11, 3840x2160.
 NGX runtime 310.9.16.0 from the official NVIDIA SDK.
 
-The installer currently expects the existing cloud/water fix v0.2.0 DLL.
+The installer supports a clean game installation or the known cloud/water fix
+v0.2.0 DLL. Both corrections are included, so the older fix is not required.
 It refuses to replace an unknown wrapper or a mismatched game build.
 
 ## Use the installed mod
@@ -58,13 +59,58 @@ selected internal render scale. It does not switch Quality mode back to native 4
 
 ## Install from the binary package
 
-Close ELEX, extract the ZIP to a persistent folder and run `tools/install.ps1`
-to review the changes, then `tools/install.ps1 -Apply` to install. Windows may
-request permission to write to the Steam game folder. Keep the extracted folder:
-its backups and installation manifest are needed for rollback. Do not blindly
-overwrite an unrelated graphics wrapper.
+Download **`ELEX-DLSS-<version>-Windows-x64.zip`** from the release's Assets section.
+GitHub's automatic "Source code" downloads do not contain the built DLL or DLSS
+runtime. The Windows ZIP includes both DLLs, the INI, installation/rollback tools
+and required license notices; end users do not need Zig, Python or the SDK.
 
-## Build and test
+Run ELEX once to create its user configuration, then close it. Extract the ZIP
+to a persistent folder. From PowerShell in that folder, run:
+
+```powershell
+.\tools\install.ps1                           # review changes
+.\tools\install.ps1 -Apply                    # install in the default Steam path
+.\tools\install.ps1 -Game 'D:\SteamLibrary\steamapps\common\ELEX' -Apply
+```
+
+Choose the installation command matching your game location. The installer sets
+SMAA T2x and preserves the previous configuration. Windows may request permission
+to write to the Steam game folder. Keep the extracted folder: its backups and
+installation manifest are needed for rollback. A clean-install rollback removes
+the mod proxy; an installation over the supported graphics fix restores that DLL.
+
+## Automated GitHub releases
+
+The [Build release assets workflow](.github/workflows/release.yml) runs when a
+release is **published**, including a prerelease. Saving a draft does not run it.
+
+1. Commit and push the workflow and supporting scripts to GitHub.
+2. Create a release targeting a commit that includes them, using a tag such as
+   `v0.1.1`, `0.1.1` or `v0.2.0-beta.1`.
+3. Publish the release and wait for **Build release assets** to finish in Actions.
+4. These files appear in the release's Assets section:
+
+   - `ELEX-DLSS-<version>-Windows-x64.zip` — the end-user package.
+   - `ELEX-DLSS-<version>-Source.zip` — source and build scripts.
+   - `SHA256SUMS.txt` — archive and packaged DLL checksums.
+
+The workflow uses Windows Server 2022, checksum-pinned Zig 0.15.2, and the exact
+NVIDIA SDK commit listed below. It verifies the runtime hash, package contents,
+version, licenses and checksums before uploading. The release tag determines the
+archive version, `VERSION.txt`, and the DLL's startup/NGX version strings.
+
+Uploads use GitHub's built-in `GITHUB_TOKEN`; no personal token or additional
+secret is needed. Only the upload job has `contents: write` permission. Re-running
+a successful release job replaces the three matching assets. To test without
+publishing, use **Actions → Build release assets → Run workflow**, select a ref
+and enter a version. That produces a downloadable Actions artifact only.
+
+GitHub-hosted runners do not provide the RTX hardware or ELEX installation used
+for gameplay validation. CI compiles the DLL and tests packaging/installer
+behavior; it does not run the GPU probe or prove that a new renderer change works
+in game. See [GitHub's release-event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release).
+
+## Build and test locally
 
 Use Zig 0.15.2 on Windows and Python 3. Obtain the official NVIDIA DLSS SDK
 commit `9981c6350dc58c0ce21f024fd65e31e851c31689` in `.deps/DLSS`.
@@ -76,6 +122,17 @@ Read its license before distributing SDK components.
 .\tools\install.ps1 -Mode Quality        # review-only dry run
 .\tools\install.ps1 -Mode Quality -Apply # close ELEX first
 ```
+
+To reproduce versioned release assets locally:
+
+```powershell
+.\tests\release-tools.ps1
+.\build.ps1 -Zig 'C:\Tools\zig\zig.exe' -Version 0.2.0-beta.1
+.\tools\package.ps1 -Version 0.2.0-beta.1
+python .\tools\verify-package.py --version 0.2.0-beta.1
+```
+
+The packager rejects a version that differs from the last successful DLL build.
 
 The installed log is `system/elex-dlss.log`. Require **DLSS EVALUATED** from the
 current process before reporting DLSS active. Startup/shader-match lines alone

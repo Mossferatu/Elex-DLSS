@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Build and attach Windows/source ZIPs and checksums when a GitHub release is published.
+- Pinned toolchain/SDK downloads, package verification and manual build-only runs.
+- Derive archive and DLL versions from release tags, including prerelease tags.
+- Support clean ELEX installations, default-only user configuration and rollback
+  while retaining conflict checks for existing graphics wrappers.
+
 ## 0.1.0 - 2026-11-02
 
 - Native NVIDIA NGX D3D11 Super Resolution and DLAA at ELEX's SMAA T2x resolve.

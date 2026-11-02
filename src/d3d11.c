@@ -7,6 +7,7 @@
 #include "patch.h"
 #include "water.h"
 #include "renderer.h"
+#include "../build/version.h"
 
 typedef HRESULT (WINAPI *CreateDeviceFn)(IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE,
     UINT, const D3D_FEATURE_LEVEL *, UINT, UINT, ID3D11Device **,
@@ -106,7 +107,7 @@ static BOOL CALLBACK initialize(PINIT_ONCE init, PVOID parameter, PVOID *context
         return TRUE;
     }
     init_result = S_OK;
-    log_message("ELEX DLSS prototype 0.1.0; cloud/water fix v0.2.0; PID=%lu; native D3D11; "
+    log_message("ELEX DLSS " ELEX_DLSS_VERSION "; cloud/water fix v0.2.0; PID=%lu; native D3D11; "
         "DLSS is active only after EVALUATED", GetCurrentProcessId());
     return TRUE;
 }

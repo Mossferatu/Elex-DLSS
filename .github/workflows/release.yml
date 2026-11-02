@@ -1,0 +1,133 @@
+name: Build release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (for example 0.1.1 or 0.2.0-beta.1); does not publish a release'
+        required: true
+        default: '0.1.0'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify Windows distribution
+    runs-on: windows-2022
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out the exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          MANUAL_VERSION: ${{ inputs.version }}
+        run: |
+          $requested = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { $env:MANUAL_VERSION }
+          $version = .\tools\resolve-version.ps1 -Version $requested
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+
+      - name: Check out the pinned NVIDIA DLSS SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/DLSS
+          ref: 9981c6350dc58c0ce21f024fd65e31e851c31689
+          path: .deps/DLSS
+          persist-credentials: false
+          sparse-checkout: |
+            include
+            lib/Windows_x86_64/rel
+
+      - name: Install checksum-verified Zig 0.15.2
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP 'zig-0.15.2.zip'
+          Invoke-WebRequest 'https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip' -OutFile $archive
+          $expected = '3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw 'Zig download checksum mismatch.'
+          }
+          $destination = Join-Path $env:RUNNER_TEMP 'zig'
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination
+          $compiler = Join-Path $destination 'zig-x86_64-windows-0.15.2\zig.exe'
+          if (-not (Test-Path -LiteralPath $compiler)) { throw 'Zig compiler missing from archive.' }
+          Split-Path -Parent $compiler | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Test release tooling
+        run: .\tests\release-tools.ps1
+
+      - name: Build native DLL and package end-user files
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          .\build.ps1 -Version $env:PACKAGE_VERSION
+          .\tools\package.ps1 -Version $env:PACKAGE_VERSION
+
+      - name: Verify archives and checksums
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python tools/verify-package.py --version $env:PACKAGE_VERSION
+          if ($LASTEXITCODE -ne 0) { throw 'Release package verification failed.' }
+
+      - name: Save release artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ELEX-DLSS-${{ steps.version.outputs.version }}
+          path: |
+            dist/ELEX-DLSS-${{ steps.version.outputs.version }}-Windows-x64.zip
+            dist/ELEX-DLSS-${{ steps.version.outputs.version }}-Source.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  attach:
+    name: Attach assets to the published release
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ELEX-DLSS-${{ needs.build.outputs.version }}
+          path: release-assets
+
+      - name: Upload the three release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "release-assets/ELEX-DLSS-${PACKAGE_VERSION}-Windows-x64.zip" \
+            "release-assets/ELEX-DLSS-${PACKAGE_VERSION}-Source.zip" \
+            "release-assets/SHA256SUMS.txt" --clobber

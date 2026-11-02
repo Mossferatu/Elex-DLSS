@@ -14,7 +14,9 @@ foreach ($entry in $manifest.Files) {
     }
 }
 $proxyBackup = Join-Path $manifest.Backup 'd3d11.dll'
-if ((Get-FileHash -LiteralPath $proxyBackup).Hash.ToLowerInvariant() -ne $manifest.ProxyBeforeSha256) { throw 'Backup hash mismatch' }
+# Older manifests always represented an existing cloud/water DLL.
+$proxyExisted = if ($null -ne $manifest.ProxyExisted) { [bool]$manifest.ProxyExisted } else { [bool]$manifest.ProxyBeforeSha256 }
+if ($proxyExisted -and (Get-FileHash -LiteralPath $proxyBackup).Hash.ToLowerInvariant() -ne $manifest.ProxyBeforeSha256) { throw 'Backup hash mismatch' }
 $configBackup = Join-Path $manifest.Backup 'ConfigUser.xml'
 if ((Get-FileHash -LiteralPath $configBackup).Hash.ToLowerInvariant() -ne $manifest.ConfigBeforeSha256) { throw 'Configuration backup hash mismatch' }
 $ini = [IO.Path]::GetFullPath($manifest.Ini)
@@ -23,13 +25,17 @@ $runtime = Join-Path $system 'nvngx_dlss.dll'
 if (@($manifest.Files | Where-Object { [IO.Path]::GetFullPath($_.Target) -eq $runtime }).Count -ne 1) {
     throw 'NGX runtime not present in the verified manifest'
 }
-Write-Output 'Restore original cloud/water DLL; remove only the installed NGX runtime and mod INI; restore prior AA configuration.'
+Write-Output 'Restore the prior graphics DLL when present, otherwise remove the mod proxy; remove the installed NGX runtime and unchanged mod INI; restore prior AA configuration.'
 if (-not $Apply) { Write-Output 'Dry run. Use -Apply after review.'; return }
-Copy-Item -LiteralPath $proxyBackup -Destination (Join-Path $system 'd3d11.dll')
+if ($proxyExisted) {
+    Copy-Item -LiteralPath $proxyBackup -Destination (Join-Path $system 'd3d11.dll')
+} else {
+    Remove-Item -LiteralPath (Join-Path $system 'd3d11.dll')
+}
 Remove-Item -LiteralPath $runtime
 if ((Get-FileHash -LiteralPath $ini).Hash.ToLowerInvariant() -eq $manifest.IniSha256) { Remove-Item -LiteralPath $ini }
 if ((Get-FileHash -LiteralPath $manifest.Config).Hash.ToLowerInvariant() -eq $manifest.ConfigAfterSha256) {
     Copy-Item -LiteralPath (Join-Path $manifest.Backup 'ConfigUser.xml') -Destination $manifest.Config
 } else { Write-Output 'Game configuration changed after installation; retained current configuration.' }
-Rename-Item -LiteralPath $manifestPath -NewName ('rolled-back-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
-Write-Output 'Original graphics DLL restored and installation rolled back.'
+Rename-Item -LiteralPath $manifestPath -NewName ('rolled-back-' + [guid]::NewGuid().ToString('N') + '.json')
+Write-Output 'Prior graphics installation restored.'
