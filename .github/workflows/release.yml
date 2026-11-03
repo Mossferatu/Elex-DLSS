@@ -80,7 +80,9 @@ jobs:
         run: .\tools\fetch-streamline.ps1
 
       - name: Test release tooling
-        run: .\tests\release-tools.ps1
+        run: |
+          .\tests\release-tools.ps1
+          .\tests\nvidia-presets.ps1
 
       - name: Build native DLL and package end-user files
         env:

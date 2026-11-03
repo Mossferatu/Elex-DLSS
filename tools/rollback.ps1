@@ -27,6 +27,10 @@ if (@($manifest.Files | Where-Object { [IO.Path]::GetFullPath($_.Target) -eq $ru
 }
 Write-Output 'Restore the prior graphics DLL when present, otherwise remove the mod proxy; remove mod-owned NVIDIA/Streamline runtimes and unchanged INI; restore prior AA configuration.'
 if (-not $Apply) { Write-Output 'Dry run. Use -Apply after review.'; return }
+if(Test-Path -LiteralPath (Join-Path $root 'backups\nvidia-fg-preset.json')){
+    . (Join-Path $PSScriptRoot 'nvidia-presets.ps1')
+    Set-ElexFgPreset -Root $root -Executable (Join-Path $system 'ELEX.exe') -Preset Default
+}
 if ($proxyExisted) {
     Copy-Item -LiteralPath $proxyBackup -Destination (Join-Path $system 'd3d11.dll')
 } else {

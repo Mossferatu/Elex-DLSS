@@ -59,6 +59,7 @@ With ELEX closed, either edit the active INI or run:
 ```
 
 Use `DLAA` for native-resolution reconstruction. Restart after changing modes.
+Model presets are separate from these resolution modes; see below.
 F10 switches the temporal reconstruction off/on for comparison while keeping the
 selected internal render scale. It does not switch Quality mode back to native 4K.
 Frame generation also pauses while F10 disables DLSS, because its temporal
@@ -102,6 +103,61 @@ generation for that frame.
 | Quality | 66.7% | Live 2560x1440 -> 3840x2160 |
 | Balanced | 58% | Implemented; not gameplay-tested |
 | Performance | 50% | Implemented; not gameplay-tested |
+
+### Model presets
+
+For Super Resolution/DLAA, set `Preset` in the active INI's `[DLSS]` section:
+
+```ini
+[DLSS]
+Mode=Quality
+Preset=K
+```
+
+Supported values are `Default`, `E`, `F`, `J`, `K`, `L`, and `M`, independent of
+the resolution mode. `Default` lets NGX choose; E/F are deprecated legacy choices.
+The pinned SDK removes A-D and marks G-I/N-O unusable, so those values are rejected
+by the helper. The runtime logs a warning and falls back to Default for an invalid
+manually edited value. Presets are NGX hints: runtime support and NVIDIA driver/App
+overrides can affect the model actually selected. Restart after changing a preset.
+See [NVIDIA's SR preset definitions](https://github.com/NVIDIA/DLSS/blob/9981c6350dc58c0ce21f024fd65e31e851c31689/include/nvsdk_ngx_defs.h).
+
+With ELEX closed, the helper can change just the preset while retaining quality,
+or change both:
+
+```powershell
+.\tools\set-mode.ps1 -Preset K
+.\tools\set-mode.ps1 -Mode Quality -Preset M
+```
+
+**Frame Generation model presets use NVIDIA's ELEX driver profile.** Streamline2.14.16
+has no public model-preset member. These commands use NVIDIA's public DRS API to
+select `A`, `B`, `C`, or `Latest` for ELEX only:
+
+```powershell
+.\tools\set-frame-generation.ps1 -ShowPreset
+.\tools\set-frame-generation.ps1 -Preset B
+.\tools\set-frame-generation.ps1 -Mode Dynamic -TargetFPS 122 -Preset C
+.\tools\set-frame-generation.ps1 -Preset Default
+```
+
+`Latest` lets the driver select its latest supported preset. `Default` restores
+the two FG preset settings saved before the helper's first override; without a
+saved override it leaves the existing NVIDIA settings alone. The helper saves
+the original values in `backups/nvidia-fg-preset.json`, verifies readback, protects
+later independent edits, and refuses profiles shared with another application.
+Rollback restores an override created by this helper. VSync, frame limits, native
+Dynamic scheduling and global settings are not changed by preset selection.
+
+FG preset letters are **not SR preset letters**. B selects NVIDIA's enhanced FG
+model; C is NVIDIA's newer performance mode. Availability depends on the installed
+driver/runtime. See [NVIDIA's FG B description](https://www.nvidia.com/en-us/geforce/news/dlss-4-5-dynamic-multi-frame-generation-6x-mode-released/)
+and [FG C description](https://www.nvidia.com/en-eu/geforce/news/dlss-5-faster-ai-model-hogwarts-legacy-rtx-spark-laptops/).
+There is no `[FrameGeneration] Preset` INI key: use the helper or NVIDIA App for
+that driver setting. Changes take effect after restarting ELEX. The helper needs
+64-bit PowerShell and the NVIDIA driver; it reports a driver error if the setting
+cannot be applied. SR `Preset=Default` and existing FG driver choices are retained
+by default during installation.
 
 ## Install from the binary package
 
@@ -202,6 +258,11 @@ directory. Subsequent independent game-configuration edits are preserved.
 ## Validation and limits
 
 - Native NGX synthetic-input test: 16 evaluations with correct GPU readback.
+- SR preset K and M hints:16 GPU evaluations each with correct readback; K also
+  read from the installed INI and evaluated successfully in live gameplay.
+- FG A/B/C/Latest accepted by native DRS in temporary sessions; sessions discarded
+  and the persistent profile verified unchanged. Saved-setting/restore behavior
+  is covered by isolated driver fixtures, including failed saves and later edits.
 - Captured ELEX gameplay frame: compiled DLL evaluated DLSS, cloud and water
   corrections applied, output inspected.
 - Native hardware and WARP smoke tests: unrelated shader execution and
@@ -232,6 +293,7 @@ MIT cloud/water code: [license](./third_party/cloud-water/LICENSE.txt), derived
 from the player's Elex-Flicker-fix project revision
 `cbfea33d4047cdea1916123c89776d7a48d4a055`.
 MinHook 1.3.4: [license](./third_party/minhook/LICENSE.txt).
+NVIDIA NVAPI DRS ABI definitions: [MIT notice](./third_party/nvapi/LICENSE.txt).
 [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS) is licensed separately.
 [NVIDIA Streamline](https://github.com/NVIDIA-RTX/Streamline) and its NVIDIA
 runtime components are licensed separately; their notices ship in

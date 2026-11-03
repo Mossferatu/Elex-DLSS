@@ -46,7 +46,7 @@ function New-Fixture([string]$Name, [string]$Proxy = '') {
     $game = Join-Path $base 'game'
     $system = Join-Path $game 'system'
     New-Item -ItemType Directory -Path (Join-Path $package 'system'),(Join-Path $package 'tools'),$system -Force | Out-Null
-    foreach ($tool in @('install.ps1','rollback.ps1','set-mode.ps1','set-frame-generation.ps1','settings.ps1','streamline-runtime.json')) {
+    foreach ($tool in @('install.ps1','rollback.ps1','set-mode.ps1','set-frame-generation.ps1','settings.ps1','streamline-runtime.json','nvidia-presets.ps1','nvidia-profile.cs')) {
         Copy-Item -LiteralPath (Join-Path $root "tools\$tool") -Destination (Join-Path $package 'tools')
     }
     [IO.File]::WriteAllText((Join-Path $system 'ELEX.exe'),'fixture-elex-executable')
@@ -90,6 +90,13 @@ Assert-True ([IO.File]::ReadAllText($clean.Config).Contains('AntiAliasing="TSMAA
 Assert-True ([IO.File]::ReadAllText((Join-Path $clean.System 'elex-dlss.ini')).Contains('Mode=DLAA')) 'Mode helper works'
 $iniPath=Join-Path $clean.System 'elex-dlss.ini'
 Assert-True ([IO.File]::ReadAllText($iniPath).Contains('Mode=Dynamic')) 'SR mode edit preserves FG mode'
+& (Join-Path $clean.Package 'tools\set-mode.ps1') -Preset M | Out-Null
+$presetText=[IO.File]::ReadAllText($iniPath)
+Assert-True ($presetText.Contains('Preset=M') -and $presetText.Contains('Mode=DLAA') -and $presetText.Contains('Mode=Dynamic')) 'Preset-only edit preserves both modes'
+& (Join-Path $clean.Package 'tools\set-mode.ps1') -Mode Quality | Out-Null
+Assert-True ([IO.File]::ReadAllText($iniPath).Contains('Preset=M')) 'Quality edit preserves preset'
+& (Join-Path $clean.Package 'tools\set-mode.ps1') -Mode DLAA | Out-Null
+Assert-Throws { & (Join-Path $clean.Package 'tools\set-mode.ps1') -Preset G } 'Reject reserved SR preset'
 & (Join-Path $clean.Package 'tools\set-frame-generation.ps1') -Mode Dynamic -TargetFPS 122.5 | Out-Null
 $iniText=[IO.File]::ReadAllText($iniPath)
 Assert-True ($iniText.Contains('TargetFPS=122.5') -and $iniText.Contains('Mode=DLAA')) 'FG target edit preserves SR mode'
@@ -171,3 +178,9 @@ Rollback-Fixture $retained
 Assert-True (Test-Path -LiteralPath (Join-Path $retained.System 'nvngx_dlssg.dll')) 'Pre-existing runtime retained on rollback'
 Assert-True (@(Get-ChildItem -LiteralPath $retained.System -Filter '*.dll').Count -eq 1) 'Only the retained runtime remains'
 Write-Output 'PASS: explicitly retained pre-existing runtime survives rollback'
+
+$presetInstall=New-Fixture 'sr-preset-install'
+& (Join-Path $presetInstall.Package 'tools\install.ps1') -Game $presetInstall.Game -ConfigPath $presetInstall.Config -Preset K -Apply | Out-Null
+Assert-True ([IO.File]::ReadAllText((Join-Path $presetInstall.System 'elex-dlss.ini')).Contains('Preset=K')) 'Installer applies requested SR preset'
+Rollback-Fixture $presetInstall
+Write-Output 'PASS: installer accepts independent SR model preset'

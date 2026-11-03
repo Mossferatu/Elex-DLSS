@@ -8,6 +8,7 @@
 #include <math.h>
 #include <wchar.h>
 #include "nvsdk_ngx.h"
+#include "sr_presets.h"
 
 /* Driver-core ABI, analogous to NVIDIA's standalone CUDA loader. The public
  * SDK's parameter wrappers below preserve the Microsoft C++ object ABI. */
@@ -59,11 +60,13 @@ static float half_float(unsigned short h)
 
 int wmain(int argc, wchar_t **argv)
 {
-    if (argc != 3) {
-        fputs("Usage: ngx-probe.exe <official-DLSS-runtime-directory> <scratch-directory>\n", stderr);
+    unsigned preset=0;
+    if ((argc != 3 && argc != 4) || (argc == 4 && !elex_sr_preset_parse(argv[3],&preset))) {
+        fputs("Usage: ngx-probe.exe <official-DLSS-runtime-directory> <scratch-directory> [Default|E|F|J|K|L|M]\n", stderr);
         return 2;
     }
     setvbuf(stdout, NULL, _IONBF, 0);
+    printf("SR preset hint: %u\n",preset);
     int exit_code = 1, initialized = 0;
     ID3D11Device *device = NULL;
     ID3D11DeviceContext *context = NULL;
@@ -124,6 +127,7 @@ int wmain(int argc, wchar_t **argv)
     NVSDK_NGX_Parameter_SetI(params, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags,
         NVSDK_NGX_DLSS_Feature_Flags_IsHDR | NVSDK_NGX_DLSS_Feature_Flags_MVLowRes |
         NVSDK_NGX_DLSS_Feature_Flags_AutoExposure);
+    elex_sr_preset_apply(params,preset);
     result = create(context, NVSDK_NGX_Feature_SuperSampling, params, &feature);
     printf("Create DLSS 640x360 -> 960x540: 0x%08x\n", result);
     if (NVSDK_NGX_FAILED(result)) goto cleanup;

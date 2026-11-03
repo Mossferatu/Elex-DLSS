@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "ngx_backend.h"
+#include "sr_presets.h"
 #include "../build/version.h"
 #include <stdio.h>
 #include <wchar.h>
@@ -27,6 +28,7 @@ struct ElexNgx {
     ShutdownFn shutdown;
     ElexLog log;
     UINT width, height, out_width, out_height;
+    unsigned preset;
     bool initialized;
     unsigned long long evaluations;
 };
@@ -53,6 +55,13 @@ ElexNgx *elex_ngx_open(ID3D11Device *device, const wchar_t *runtime_dir,
     ElexNgx *n = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*n));
     if (!n) return NULL;
     n->log = log; ngx_logger = log;
+    wchar_t ini[32768],preset[32];
+    if(swprintf(ini,32768,L"%ls\\elex-dlss.ini",runtime_dir)<0)goto fail;
+    GetPrivateProfileStringW(L"DLSS",L"Preset",L"Default",preset,32,ini);
+    if(!elex_sr_preset_parse(preset,&n->preset)){
+        log("Invalid DLSS Preset=%ls; using Default",preset);n->preset=0;
+    }
+    log("DLSS Super Resolution preset hint: %ls (value=%u; NVIDIA overrides may take precedence)",n->preset?preset:L"Default",n->preset);
     wchar_t path[32768]; DWORD bytes = sizeof(path);
     LSTATUS status = RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\NVIDIA Corporation\\Global\\NGXCore",
         L"FullPath", RRF_RT_REG_SZ, NULL, path, &bytes);
@@ -114,6 +123,7 @@ bool elex_ngx_size(ElexNgx *n, ID3D11DeviceContext *context, UINT w, UINT h, UIN
     // Input is the engine's tone-mapped SDR scene, not its linear HDR buffer.
     NVSDK_NGX_Parameter_SetI(n->params, NVSDK_NGX_Parameter_DLSS_Feature_Create_Flags,
         NVSDK_NGX_DLSS_Feature_Flags_MVLowRes);
+    elex_sr_preset_apply(n->params,n->preset);
     NVSDK_NGX_Result result = n->create(context, NVSDK_NGX_Feature_SuperSampling, n->params, &n->feature);
     n->log("DLSS create %ux%u -> %ux%u: 0x%08x", w, h, ow, oh, result);
     if (NVSDK_NGX_FAILED(result)) return false;

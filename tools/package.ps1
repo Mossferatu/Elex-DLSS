@@ -33,11 +33,13 @@ foreach ($file in @('README.md','CHANGELOG.md','LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination $stage
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceStage
 }
-foreach ($file in @('install.ps1','rollback.ps1','set-mode.ps1','set-frame-generation.ps1','settings.ps1','streamline-runtime.json')) {
+foreach ($file in @('install.ps1','rollback.ps1','set-mode.ps1','set-frame-generation.ps1','settings.ps1','streamline-runtime.json','nvidia-presets.ps1','nvidia-profile.cs')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $stage 'tools')
 }
 Copy-Item -LiteralPath (Join-Path $root 'third_party\cloud-water\LICENSE.txt') -Destination (Join-Path $stage 'third_party\cloud-water')
 Copy-Item -LiteralPath (Join-Path $root 'third_party\minhook\LICENSE.txt') -Destination (Join-Path $stage 'third_party\minhook')
+New-Item -ItemType Directory -Path (Join-Path $stage 'third_party\nvapi') | Out-Null
+Copy-Item -LiteralPath (Join-Path $root 'third_party\nvapi\LICENSE.txt') -Destination (Join-Path $stage 'third_party\nvapi')
 Copy-Item -LiteralPath (Join-Path $root '.deps\DLSS\LICENSE.txt') -Destination (Join-Path $stage 'NVIDIA-LICENSE.txt')
 foreach ($folder in @('src','third_party','tools','docs','tests','.github')) {
     Copy-Item -LiteralPath (Join-Path $root $folder) -Destination $sourceStage -Recurse

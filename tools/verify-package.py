@@ -43,6 +43,7 @@ expected = {
     'third_party/cloud-water/LICENSE.txt', 'third_party/minhook/LICENSE.txt',
     'tools/install.ps1', 'tools/rollback.ps1', 'tools/set-mode.ps1',
     'tools/set-frame-generation.ps1', 'tools/settings.ps1', 'tools/streamline-runtime.json',
+    'tools/nvidia-presets.ps1', 'tools/nvidia-profile.cs', 'third_party/nvapi/LICENSE.txt',
 }
 expected.update('system/' + name for name in STREAMLINE['files'])
 expected.update('third_party/streamline/' + PurePosixPath(name).name for name in STREAMLINE['licenses'])
@@ -52,6 +53,7 @@ require(source['VERSION.txt'].decode('ascii').strip() == args.version, 'Source v
 require(hashlib.sha256(binary['system/nvngx_dlss.dll']).hexdigest() == RUNTIME_SHA256,
         'Unverified NVIDIA runtime')
 require(b'Mode=Quality' in binary['system/elex-dlss.ini'], 'Missing default Quality configuration')
+require(b'Preset=Default' in binary['system/elex-dlss.ini'], 'Missing default SR preset configuration')
 require(b'[FrameGeneration]' in binary['system/elex-dlss.ini'] and b'Mode=Dynamic' in binary['system/elex-dlss.ini']
         and b'TargetFPS=122' in binary['system/elex-dlss.ini'], 'Missing native Dynamic MFG configuration')
 require(json.loads(binary['tools/streamline-runtime.json']) == STREAMLINE, 'Runtime manifest mismatch')

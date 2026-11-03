@@ -314,3 +314,52 @@ Only install a concrete reviewed prototype after the required confirmation.
   completed as beta. Native scheduling remains NVIDIA-owned. Performance gain
   and frame pacing are not benchmarked, and broader scene/hardware coverage is
   still unverified. Source checkpoint is local; no GitHub publish was performed.
+
+## Model preset controls (in progress)
+
+- User requests selectable SR and FG model presets. SR uses public NGX creation
+  hints for all quality modes, exposed as [DLSS] Preset=Default/E/F/J/K/L/M.
+  E/F are deprecated; removed/reserved SDK letters are rejected by helpers.
+- Streamline2.14.16 has no public FG model-preset field. Implemented an ELEX-only
+  NVIDIA DRS helper for A/B/C/Latest, plus restoration to prior values via Default.
+  No fake FG INI setting, custom scheduler, multiplier ceiling or global changes.
+- Official NVIDIA NvApiDriverSettings.h defines FG override0x10e41e03 and preset
+  selection0x10e41df1, A=1/B=2/C=3, Latest=0x00ffffff. Minimal C# bindings use
+  System32 nvapi64.dll; native layouts checked before calling. NVIDIA MIT notice
+  included. No additional SDK download needed to build or use the helper.
+- Read-only native query succeeded: profile ELEX, inherited/predefined override
+  enabled1 and presetDefault0x00fffffe; no driver preset writes performed yet.
+- Driver fixture tests compile real bindings and mock writes: mapping, explicit
+  and inherited restoration, SaveSettings failure recovery, protection of later
+  edits all pass. SR preset-only/settings preservation tests pass; native build
+  succeeds. Still needed: GPU SR preset check, final integration/release package
+  verification, installation/checkpoint and final validation notes.
+
+## Preset validation and installation (2026-11-03)
+
+- SR K(value11) and M(value13) each created a native D3D11 NGX feature and ran16
+  evaluations, output RGB~(.24976,.49951,.74951). Presets remain hints and NVIDIA
+  overrides can take precedence; this does not certify every model/runtime pair.
+- Fixed an existing compiler lifetime error exposed by the standalone probe:
+  compile_shader unloaded d3dcompiler_47.dll while its ID3DBlob was still alive.
+  Retain the module until renderer shutdown. Hardware/WARP forwarding smoke passes.
+- Native NVAPI DRS session-only validation accepted FG A/B/C/Latest. Each staged
+  pair returned HasOverride=true and the expected DWORD. Discarded all sessions
+  without SaveSettings; a fresh query confirmed original inherited/predefined
+  override1 and preset0x00fffffe unchanged. No persistent driver write was made.
+- Driver fixture tests cover actual-save failure recovery and restore semantics;
+  native persistent saving has not been exercised on the user's profile.
+- Built/installed0.2.0-beta.2, DLL SHA256
+  bbf3e18e48dc146bbf434d0ee8d7ad503b623cbb3f65c6ae3ae727d9a9d3d28c.
+  Prior DLL/INI/log/manifest in backups/presets-20261103-135501.
+- Live PID1828 read Preset=K(value11), created2560x1440->3840x2160 DLSS and
+  completed>1800 evaluations. Screenshot inspected; native Dynamic status0 and
+  both cloud/water corrections still active. Test then restores SR Default.
+- Preset helpers and installer tests, C# ABI/driver-state fixtures, actionlint,
+  native build, package verification and distribution lint pass. Beta2 archives
+  include the C#/PowerShell helper and NVIDIA MIT notice; source69 files and
+  binary package29 files, zero lint failures/warnings. No game files packaged.
+- FG model preset intentionally uses the ELEX-only driver profile helper, not
+  a nonfunctional Streamline INI option. Default restores saved previous values;
+  no saved override means leave current NVIDIA settings alone. Existing Dynamic
+  target122 and absence of a multiplier ceiling retained. Source remains local.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- User-selectable SR/DLAA model presets, independent of resolution mode.
+- ELEX-only NVIDIA FG model-preset helper (A/B/C/Latest), with readback, saved
+  previous settings and restoration through Default or rollback.
+- Retain the shader compiler DLL while its returned bytecode objects are alive;
+  fixes standalone startup without a preloaded compiler module.
 - Native NVIDIA Dynamic Multi Frame Generation through a D3D11/D3D12 presentation
   bridge, with Reflex and configurable output FPS (default122), without a multiplier ceiling.
 - Fix fullscreen startup by refreshing flip-model buffers after ELEX's mode switch.

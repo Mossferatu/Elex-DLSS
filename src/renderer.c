@@ -51,6 +51,7 @@ static ID3D11DeviceContext1 *context1;
 static ID3DDeviceContextState *clean_state;
 static ID3D11ComputeShader *prepare_cs, *output_cs;
 static ID3D11PixelShader *motion_ps;
+static HMODULE shader_compiler;
 static ID3D11ShaderResourceView *scene_color, *scene_depth;
 static float frame_globals[192];
 static bool has_globals, has_frame, backend_failed, reset_history = true;
@@ -419,14 +420,16 @@ static void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext *ctx,UINT x,UINT y,UI
 
 static HRESULT compile_shader(const char *text,const char *profile,ID3DBlob **code)
 {
-    HMODULE compiler=LoadLibraryExW(L"d3dcompiler_47.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if(!compiler)return HRESULT_FROM_WIN32(GetLastError());
-    CompileFn compile=(CompileFn)GetProcAddress(compiler,"D3DCompile");
+    // Returned ID3DBlob vtables belong to the compiler DLL. Keep it loaded
+    // until callers have consumed and released every blob.
+    if(!shader_compiler)shader_compiler=LoadLibraryExW(L"d3dcompiler_47.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!shader_compiler)return HRESULT_FROM_WIN32(GetLastError());
+    CompileFn compile=(CompileFn)GetProcAddress(shader_compiler,"D3DCompile");
     ID3DBlob *errors=NULL;
     HRESULT hr=compile?compile(text,strlen(text),"ELEX-DLSS",NULL,NULL,"main",profile,
         D3DCOMPILE_OPTIMIZATION_LEVEL3,0,code,&errors):E_NOINTERFACE;
     if(errors){log_line("Shader compiler: %s",(char *)ID3D10Blob_GetBufferPointer(errors));DROP(errors);}
-    FreeLibrary(compiler);return hr;
+    return hr;
 }
 
 static HRESULT shaders_init(ID3D11Device *device)
@@ -552,4 +555,5 @@ void elex_renderer_shutdown(void)
     release_surface(&input_color);release_surface(&input_depth);release_surface(&input_motion);release_surface(&dlss_output);
     DROP(scene_color);DROP(scene_depth);DROP(motion_ps);DROP(prepare_cs);DROP(output_cs);
     DROP(clean_state);DROP(context1);DROP(render_context);DROP(render_device);
+    if(shader_compiler){FreeLibrary(shader_compiler);shader_compiler=NULL;}
 }
