@@ -4,15 +4,15 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $testRoot = Join-Path $root ('build\release-tests-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
-$script:failCopyTo = ''
+$testState = @{FailCopyTo=''}
 
 function Assert-True($Condition, [string]$Message) {
     if (-not $Condition) { throw "FAIL: $Message" }
 }
 function Assert-Throws([scriptblock]$Action, [string]$Message) {
-    $failed = $false
-    try { & $Action | Out-Null } catch { $failed = $true }
-    Assert-True $failed $Message
+    $didThrow = $false
+    try { & $Action | Out-Null } catch { $didThrow = $true }
+    Assert-True $didThrow $Message
 }
 function Get-Process {
     [CmdletBinding()]
@@ -37,7 +37,7 @@ function Get-FileHash {
 function Copy-Item {
     [CmdletBinding()]
     param([string[]]$LiteralPath, [string]$Destination, [switch]$Recurse)
-    if ($script:failCopyTo -and $Destination -eq $script:failCopyTo) { throw 'Injected runtime-copy failure.' }
+    if ($testState.FailCopyTo -and $Destination -eq $testState.FailCopyTo) { throw 'Injected runtime-copy failure.' }
     Microsoft.PowerShell.Management\Copy-Item @PSBoundParameters
 }
 function New-Fixture([string]$Name, [string]$Proxy = '') {
@@ -46,7 +46,7 @@ function New-Fixture([string]$Name, [string]$Proxy = '') {
     $game = Join-Path $base 'game'
     $system = Join-Path $game 'system'
     New-Item -ItemType Directory -Path (Join-Path $package 'system'),(Join-Path $package 'tools'),$system -Force | Out-Null
-    foreach ($tool in @('install.ps1','rollback.ps1','set-mode.ps1')) {
+    foreach ($tool in @('install.ps1','rollback.ps1','set-mode.ps1','set-frame-generation.ps1','settings.ps1','streamline-runtime.json')) {
         Copy-Item -LiteralPath (Join-Path $root "tools\$tool") -Destination (Join-Path $package 'tools')
     }
     [IO.File]::WriteAllText((Join-Path $system 'ELEX.exe'),'fixture-elex-executable')
@@ -54,6 +54,9 @@ function New-Fixture([string]$Name, [string]$Proxy = '') {
     if ($Proxy) { [IO.File]::WriteAllText((Join-Path $system 'd3d11.dll'),$Proxy) }
     [IO.File]::WriteAllText((Join-Path $package 'system\d3d11.dll'),'fixture-dlss-proxy')
     [IO.File]::WriteAllText((Join-Path $package 'system\nvngx_dlss.dll'),'fixture-ngx-runtime')
+    Copy-Item -LiteralPath (Join-Path $root 'elex-dlss.ini') -Destination (Join-Path $package 'system')
+    $fgSpec=Get-Content -LiteralPath (Join-Path $root 'tools\streamline-runtime.json') -Raw | ConvertFrom-Json
+    foreach($name in $fgSpec.files.PSObject.Properties.Name){[IO.File]::WriteAllText((Join-Path $package "system\$name"),"fixture-$name")}
     $config = Join-Path $base 'ConfigUser.xml'
     [IO.File]::WriteAllText($config,'<options><Engine><Render><PostProcessing AntiAliasing="Off" /></Render></Engine></options>')
     @{Base=$base;Package=$package;Game=$game;System=$system;Config=$config;Original=[IO.File]::ReadAllText($config)}
@@ -85,9 +88,18 @@ Assert-True ($manifest.Complete -and -not $manifest.ProxyExisted) 'Clean install
 Assert-True ([IO.File]::ReadAllText($clean.Config).Contains('AntiAliasing="TSMAA"')) 'AA selection updated'
 & (Join-Path $clean.Package 'tools\set-mode.ps1') -Mode DLAA | Out-Null
 Assert-True ([IO.File]::ReadAllText((Join-Path $clean.System 'elex-dlss.ini')).Contains('Mode=DLAA')) 'Mode helper works'
+$iniPath=Join-Path $clean.System 'elex-dlss.ini'
+Assert-True ([IO.File]::ReadAllText($iniPath).Contains('Mode=Dynamic')) 'SR mode edit preserves FG mode'
+& (Join-Path $clean.Package 'tools\set-frame-generation.ps1') -Mode Dynamic -TargetFPS 122.5 | Out-Null
+$iniText=[IO.File]::ReadAllText($iniPath)
+Assert-True ($iniText.Contains('TargetFPS=122.5') -and $iniText.Contains('Mode=DLAA')) 'FG target edit preserves SR mode'
+& (Join-Path $clean.Package 'tools\set-frame-generation.ps1') -Mode Off | Out-Null
+Assert-True ([IO.File]::ReadAllText($iniPath).Contains('TargetFPS=122.5')) 'FG toggle preserves target'
+Assert-Throws { & (Join-Path $clean.Package 'tools\set-frame-generation.ps1') -Mode Dynamic -TargetFPS ([double]::NaN) } 'Reject invalid target'
 Rollback-Fixture $clean
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $clean.System 'd3d11.dll'))) 'Clean rollback removes proxy'
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $clean.System 'nvngx_dlss.dll'))) 'Clean rollback removes runtime'
+Assert-True (@(Get-ChildItem -LiteralPath $clean.System -Filter '*.dll').Count -eq 0) 'Rollback removes every installed FG runtime'
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $clean.System 'elex-dlss.ini'))) 'Clean rollback removes INI'
 Assert-True ([IO.File]::ReadAllText($clean.Config) -ceq $clean.Original) 'Original config restored'
 Assert-True ([IO.File]::ReadAllText((Join-Path $clean.System 'untouched.dat')) -ceq 'keep-me') 'Unrelated file preserved'
@@ -118,13 +130,21 @@ Assert-True ([IO.File]::ReadAllText((Join-Path $conflict.System 'd3d11.dll')) -c
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $conflict.Package 'backups'))) 'Conflict rejected before mutation'
 
 $failed = New-Fixture 'copy-failure'
-$script:failCopyTo = Join-Path $failed.System 'nvngx_dlss.dll'
+$testState.FailCopyTo = Join-Path $failed.System 'nvngx_dlss.dll'
 Assert-Throws { Install-Fixture $failed -Apply } 'Runtime-copy failure propagated'
-$script:failCopyTo = ''
+$testState.FailCopyTo = ''
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $failed.System 'd3d11.dll'))) 'Failed clean install undid proxy copy'
 Assert-True ([IO.File]::ReadAllText($failed.Config) -ceq $failed.Original) 'Failed install preserved config'
 Assert-True (-not (Test-Path -LiteralPath (Join-Path $failed.Package 'backups\installed.json'))) 'Failed install can be retried'
 Write-Output 'PASS: conflicting wrappers and partial installation failures handled'
+
+$fgFailed = New-Fixture 'fg-copy-failure'
+$testState.FailCopyTo = Join-Path $fgFailed.System 'sl.reflex.dll'
+Assert-Throws { Install-Fixture $fgFailed -Apply } 'Later FG-runtime failure propagated'
+$testState.FailCopyTo = ''
+Assert-True (@(Get-ChildItem -LiteralPath $fgFailed.System -Filter '*.dll').Count -eq 0) 'Failed FG install removes all copied DLLs'
+Assert-True ([IO.File]::ReadAllText($fgFailed.Config) -ceq $fgFailed.Original) 'Failed FG install restores config'
+Write-Output 'PASS: native Dynamic settings persist independently; FG install failure rolls back all runtime files'
 
 $changed = New-Fixture 'independent-config-edit'
 Install-Fixture $changed -Apply
@@ -139,3 +159,15 @@ Install-Fixture $tampered -Apply
 Assert-Throws { Rollback-Fixture $tampered } 'Rollback rejects modified installed DLL'
 Assert-True (Test-Path -LiteralPath (Join-Path $tampered.System 'd3d11.dll')) 'Rollback stopped before changing proxy'
 Write-Output 'PASS: later user edits protected and modified binaries rejected before rollback'
+
+$retained = New-Fixture 'retained-runtime'
+Install-Fixture $retained -Apply
+$retainedManifest=Join-Path $retained.Package 'backups\installed.json'
+$retainedData=Get-Content -LiteralPath $retainedManifest -Raw | ConvertFrom-Json
+$retainedEntry=$retainedData.Files | Where-Object {[IO.Path]::GetFileName($_.Target) -eq 'nvngx_dlssg.dll'}
+$retainedEntry | Add-Member -NotePropertyName RetainOnRollback -NotePropertyValue $true
+$retainedData | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $retainedManifest -Encoding UTF8
+Rollback-Fixture $retained
+Assert-True (Test-Path -LiteralPath (Join-Path $retained.System 'nvngx_dlssg.dll')) 'Pre-existing runtime retained on rollback'
+Assert-True (@(Get-ChildItem -LiteralPath $retained.System -Filter '*.dll').Count -eq 1) 'Only the retained runtime remains'
+Write-Output 'PASS: explicitly retained pre-existing runtime survives rollback'

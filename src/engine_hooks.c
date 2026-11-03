@@ -1,4 +1,5 @@
 #include "engine_hooks.h"
+#include "frame_generation.h"
 #include "../third_party/minhook/include/MinHook.h"
 #include <bcrypt.h>
 #include <math.h>
@@ -11,10 +12,13 @@ typedef bool (*GetFloatFn)(void *, const char *const *, float *, const float *);
 typedef bool (*DependencyFn)(void *, int, void *, void *, void *, void *);
 typedef void *(*FrameOwnerFn)(void);
 typedef unsigned (*FrameNumberFn)(void *);
+typedef void (*FrameTickFn)(void *);
 static GetFloatFn original_float;
 static DependencyFn original_dependency;
 static FrameOwnerFn frame_owner;
 static FrameNumberFn frame_number;
+static FrameTickFn original_tick;
+static bool frame_hook_ready;
 static float *jitter;
 static uintptr_t smaa_vtable;
 static RendererLog log_line;
@@ -22,7 +26,15 @@ static float render_scale = 1;
 static _Atomic bool active = true;
 static LONG scale_logged, jitter_logged, dependency_logged;
 
+static void frame_tick(void *timer)
+{
+    unsigned next=*(const unsigned *)((const unsigned char *)timer+0x54)+1;
+    elex_fg_simulation_start(next);
+    original_tick(timer);
+}
+
 float elex_engine_scale(void) { return render_scale; }
+bool elex_engine_frame_hook_ready(void) { return frame_hook_ready; }
 void elex_engine_set_enabled(bool value) { active = value; }
 
 static float halton(unsigned index, unsigned base)
@@ -120,7 +132,15 @@ bool elex_engine_hooks(HMODULE module,RendererLog logger)
     result=MH_CreateHook(base+0x1724d0,(void *)dependency,(void **)&original_dependency);
     if(result!=MH_OK){MH_RemoveHook(base+0x47ca0);return false;}
     MH_QueueEnableHook(base+0x47ca0);MH_QueueEnableHook(base+0x1724d0);
+    static const unsigned char tick_head[]={0xff,0x41,0x54,0xc3,0xcc};
+    if(!memcmp(base+0x51cb0,tick_head,sizeof(tick_head))) {
+        MH_STATUS tick_status=MH_CreateHook(base+0x51cb0,(void *)frame_tick,(void **)&original_tick);
+        if(tick_status==MH_OK){MH_QueueEnableHook(base+0x51cb0);frame_hook_ready=true;}
+        else logger("Reflex frame-boundary hook unavailable: %s",MH_StatusToString(tick_status));
+    }
     result=MH_ApplyQueued();
+    frame_hook_ready=frame_hook_ready&&result==MH_OK;
+    logger("Reflex engine frame-boundary hook: %s",frame_hook_ready?"ready":"unavailable");
     logger("Engine hooks: %s, mode=%ls scale=%.6f",MH_StatusToString(result),mode,render_scale);
     return result==MH_OK;
 }

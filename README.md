@@ -1,12 +1,15 @@
 # ELEX native DLSS
 
-Unofficial native D3D11 integration of NVIDIA DLSS Super Resolution and DLAA for
-ELEX, with the existing cloud/water flicker corrections included.
+Unofficial NVIDIA DLSS Super Resolution, DLAA and native Dynamic Multi Frame
+Generation for ELEX, with the existing cloud/water flicker corrections included.
+Super Resolution uses D3D11; frame generation uses a shared-resource D3D12
+presentation bridge and NVIDIA Streamline's native scheduler.
 
 Native **DLAA and DLSS Quality have been verified in live gameplay** on the
 supported build below. Quality renders at **2560x1440 and reconstructs 3840x2160**;
-the HUD stays at output resolution. Frame generation and ray reconstruction are
-not implemented. This is an early release tested in one saved outdoor scene.
+the HUD stays at output resolution. Dynamic MFG has been tested in live gameplay
+on RTX5090; this remains an early release with limited scene coverage.
+Ray reconstruction is not implemented.
 
 ## What is implemented
 
@@ -20,13 +23,22 @@ not implemented. This is an early release tested in one saved outdoor scene.
 - Immediate and deferred rendering paths; camera constants follow recorded
   command lists, without synchronous per-frame GPU readbacks.
 - Cloud execution-barrier fix and separate water-target draw workaround.
+- Native Streamline `eDynamic` frame generation with an output FPS target,
+  engine-frame Reflex markers, HUDless color, depth and motion. NVIDIA chooses
+  the multiplier; no custom scheduler or multiplier ceiling is used.
 
 ## Supported configuration
 
 ELEX Steam app 411300, build 2617898, executable 1.0.2981.0 / change 427388,
 SHA256 `7fe4f4c5a463f7b428ef74d8fe07445f734ff0dc0ad1005ed50cab34bc7f0fd5`.
 Test hardware: RTX 5090, driver 621.01, Windows 11, D3D11, 3840x2160.
-NGX runtime 310.9.16.0 from the official NVIDIA SDK.
+Packaged SR and FG runtimes:310.9.16.0; Streamline:2.14.16 production binaries.
+The local FG gameplay checks retained the player's SR runtime310.9.1.0.
+
+Dynamic MFG requires compatible RTX50-series hardware, Windows Hardware-accelerated
+GPU Scheduling, and driver595.41 or newer. The mod queries native support before
+enabling it; unsupported systems retain the D3D11 Super Resolution path.
+See [NVIDIA's Dynamic MFG guide](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.16/docs/ProgrammingGuideDLSS_G.md#63-enabling-dynamic-multi-frame-generation).
 
 The installer supports a clean game installation or the known cloud/water fix
 v0.2.0 DLL. Both corrections are included, so the older fix is not required.
@@ -49,6 +61,40 @@ With ELEX closed, either edit the active INI or run:
 Use `DLAA` for native-resolution reconstruction. Restart after changing modes.
 F10 switches the temporal reconstruction off/on for comparison while keeping the
 selected internal render scale. It does not switch Quality mode back to native 4K.
+Frame generation also pauses while F10 disables DLSS, because its temporal
+inputs are captured at that pass.
+
+### Native Dynamic MFG
+
+The active INI defaults to:
+
+```ini
+[FrameGeneration]
+Mode=Dynamic
+TargetFPS=122
+```
+
+Use `Mode=Off` for the original D3D11 presentation path. `TargetFPS=0` follows
+the display refresh rate; a positive value selects the desired output FPS.
+Restart ELEX after changing these settings, or use the package helper with ELEX closed:
+
+```powershell
+.\tools\set-frame-generation.ps1 -Mode Dynamic -TargetFPS 122
+.\tools\set-frame-generation.ps1 -Mode Off
+```
+
+**A custom target requires VSync off, including any NVIDIA Control Panel override.**
+NVIDIA ignores the custom target when VSync is enabled and targets a refresh-related
+rate instead. The mod requests unsynchronized presentation for a positive target,
+but does not change driver profiles. Native Dynamic MFG may select zero generated
+frames when the rendered frame rate is already sufficient. The target is a request,
+not a guarantee in every scene. See [NVIDIA's target and limiter behavior](https://github.com/NVIDIA-RTX/Streamline/blob/v2.14.16/docs/ProgrammingGuideDLSS_G.md#63-enabling-dynamic-multi-frame-generation).
+
+In `elex-dlss.log`, `Native Dynamic MFG enabled` confirms the selected mode;
+`FG PRESENT` reports the native status and generated-frame count. A zero count
+does not demonstrate interpolation. The periodic FPS line is diagnostic timing,
+not a frame-pacing benchmark. Menus, loading and missing temporal inputs disable
+generation for that frame.
 
 | Mode | Internal scale | Verification |
 | --- | --- | --- |
@@ -61,7 +107,8 @@ selected internal render scale. It does not switch Quality mode back to native 4
 
 Download **`ELEX-DLSS-<version>-Windows-x64.zip`** from the release's Assets section.
 GitHub's automatic "Source code" downloads do not contain the built DLL or DLSS
-runtime. The Windows ZIP includes both DLLs, the INI, installation/rollback tools
+runtime. The Windows ZIP includes the mod and all required NVIDIA/Streamline DLLs,
+the INI, installation/rollback tools
 and required license notices; end users do not need Zig, Python or the SDK.
 
 Run ELEX once to create its user configuration, then close it. Extract the ZIP
@@ -95,7 +142,7 @@ release is **published**, including a prerelease. Saving a draft does not run it
    - `SHA256SUMS.txt` — archive and packaged DLL checksums.
 
 The workflow uses Windows Server 2022, checksum-pinned Zig 0.15.2, and the exact
-NVIDIA SDK commit listed below. It verifies the runtime hash, package contents,
+NVIDIA SDK commit listed below plus checksum-pinned Streamline2.14.16. It verifies runtime hashes, package contents,
 version, licenses and checksums before uploading. The release tag determines the
 archive version, `VERSION.txt`, and the DLL's startup/NGX version strings.
 
@@ -115,8 +162,10 @@ in game. See [GitHub's release-event documentation](https://docs.github.com/en/a
 Use Zig 0.15.2 on Windows and Python 3. Obtain the official NVIDIA DLSS SDK
 commit `9981c6350dc58c0ce21f024fd65e31e851c31689` in `.deps/DLSS`.
 Read its license before distributing SDK components.
+Run the fetch helper for the pinned production Streamline SDK and its headers.
 
 ```powershell
+.\tools\fetch-streamline.ps1
 .\build.ps1 -Zig 'C:\Tools\zig\zig.exe'
 .\build\ngx-probe.exe "$PWD\.deps\DLSS\lib\Windows_x86_64\rel" "$PWD\build\ngx-data"
 .\tools\install.ps1 -Mode Quality        # review-only dry run
@@ -133,6 +182,13 @@ python .\tools\verify-package.py --version 0.2.0-beta.1
 ```
 
 The packager rejects a version that differs from the last successful DLL build.
+
+On compatible hardware, build the native FG diagnostics with
+`tools/build-fg-tests.ps1 -Zig 'C:\Tools\zig\zig.exe'`. The executables
+`build/fg-capability.exe` and `build/fg-bridge-smoke.exe` each take the absolute
+Streamline runtime directory and log directory as arguments. The bridge test
+uses original synthetic geometry; a hidden/unfocused window does not prove
+interpolated output because NVIDIA disables it in that state.
 
 The installed log is `system/elex-dlss.log`. Require **DLSS EVALUATED** from the
 current process before reporting DLSS active. Startup/shader-match lines alone
@@ -152,6 +208,11 @@ directory. Subsequent independent game-configuration edits are preserved.
   device/swap-chain forwarding passed.
 - Live DLAA and Quality: thousands of successful evaluations with history kept
   across frames; camera movement, walking, HUD, pause/resume and F10 tested.
+- Native Dynamic MFG: hardware capability confirmed,150-frame synthetic bridge
+  test with clean shutdown, fullscreen transition corrected and live gameplay
+  inspected. User confirmed normal gameplay and the retained cloud correction.
+  Driver-forced VSync was present during initial testing, so those runs do not
+  validate an exact122FPS custom target or establish a performance gain.
 - No formal FPS benchmark was run. CPU limits and DLSS overhead can limit gains.
 
 Tested with one D3D11 rendering device and the exact shader permutations and
@@ -172,6 +233,9 @@ from the player's Elex-Flicker-fix project revision
 `cbfea33d4047cdea1916123c89776d7a48d4a055`.
 MinHook 1.3.4: [license](./third_party/minhook/LICENSE.txt).
 [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS) is licensed separately.
+[NVIDIA Streamline](https://github.com/NVIDIA-RTX/Streamline) and its NVIDIA
+runtime components are licensed separately; their notices ship in
+`third_party/streamline` in the binary package. Only production DLLs are packaged.
 [RenderDoc](https://renderdoc.org/) is used only for local analysis.
 This software contains source code provided by NVIDIA Corporation. NVIDIA's SDK
 headers/runtime retain their proprietary license; they are not covered by this

@@ -1,12 +1,14 @@
 """Verify release archives without a GPU, SDK installation, or game files."""
 import argparse
 import hashlib
+import json
 from pathlib import Path, PurePosixPath
 import re
 import struct
 import zipfile
 
 RUNTIME_SHA256 = 'd00b5b0ab29c3ca101b70c3a5ecb3a01b7ef33766a3383a28a18623083e6123e'
+STREAMLINE = json.loads(Path(__file__).with_name('streamline-runtime.json').read_text(encoding='utf-8'))
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--version', required=True)
 parser.add_argument('--dist', type=Path, default=Path(__file__).resolve().parents[1] / 'dist')
@@ -40,15 +42,23 @@ expected = {
     'README.md', 'CHANGELOG.md', 'LICENSE', 'NVIDIA-LICENSE.txt', 'VERSION.txt',
     'third_party/cloud-water/LICENSE.txt', 'third_party/minhook/LICENSE.txt',
     'tools/install.ps1', 'tools/rollback.ps1', 'tools/set-mode.ps1',
+    'tools/set-frame-generation.ps1', 'tools/settings.ps1', 'tools/streamline-runtime.json',
 }
+expected.update('system/' + name for name in STREAMLINE['files'])
+expected.update('third_party/streamline/' + PurePosixPath(name).name for name in STREAMLINE['licenses'])
 require(set(binary) == expected, f'Unexpected binary ZIP contents: {set(binary) ^ expected}')
 require(binary['VERSION.txt'].decode('ascii').strip() == args.version, 'Binary version mismatch')
 require(source['VERSION.txt'].decode('ascii').strip() == args.version, 'Source version mismatch')
 require(hashlib.sha256(binary['system/nvngx_dlss.dll']).hexdigest() == RUNTIME_SHA256,
         'Unverified NVIDIA runtime')
 require(b'Mode=Quality' in binary['system/elex-dlss.ini'], 'Missing default Quality configuration')
+require(b'[FrameGeneration]' in binary['system/elex-dlss.ini'] and b'Mode=Dynamic' in binary['system/elex-dlss.ini']
+        and b'TargetFPS=122' in binary['system/elex-dlss.ini'], 'Missing native Dynamic MFG configuration')
+require(json.loads(binary['tools/streamline-runtime.json']) == STREAMLINE, 'Runtime manifest mismatch')
+for name, digest in STREAMLINE['files'].items():
+    require(hashlib.sha256(binary['system/' + name]).hexdigest() == digest, f'Unverified Streamline runtime: {name}')
 
-for name in ('system/d3d11.dll', 'system/nvngx_dlss.dll'):
+for name in ('system/d3d11.dll', 'system/nvngx_dlss.dll', *('system/' + n for n in STREAMLINE['files'])):
     data = binary[name]
     require(data[:2] == b'MZ' and len(data) >= 64, f'Not a Windows binary: {name}')
     pe = struct.unpack_from('<I', data, 60)[0]
@@ -74,7 +84,8 @@ for line in (args.dist / 'SHA256SUMS.txt').read_text(encoding='ascii').splitline
     digest, name = match.groups()
     require(name not in checksums, f'Duplicate checksum: {name}')
     checksums[name] = digest
-require(set(checksums) == {binary_name, source_name, 'system/d3d11.dll', 'system/nvngx_dlss.dll'},
+require(set(checksums) == {binary_name, source_name, 'system/d3d11.dll', 'system/nvngx_dlss.dll',
+                          *('system/' + n for n in STREAMLINE['files'])},
         'Unexpected checksum entries')
 for name, expected_hash in checksums.items():
     data = binary[name] if name.startswith('system/') else (args.dist / name).read_bytes()

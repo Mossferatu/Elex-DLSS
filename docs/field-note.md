@@ -116,4 +116,39 @@ bundled. Gameplay recordings remain separate from the mod binary package.
 
 Other shader permutations, cutscenes without visible skinned geometry, live
 resolution changes and multi-device recovery require additional validation.
-Frame generation and ray reconstruction are outside this implementation.
+Ray reconstruction is outside this implementation.
+
+## Native Dynamic MFG extension
+
+Streamline2.14.16 production SDK supplies native `eDynamic` for D3D12. ELEX keeps
+its D3D11 renderer and sees a virtual D3D11 backbuffer; a second same-adapter
+D3D12 device presents through Streamline. Shared RGBA8 color/HUDless, R32 depth
+and RG16 motion use NT handles and shared fences. The plugin owns scheduling.
+Configure `FrameGeneration/Mode=Dynamic` and `TargetFPS=122`; there is no ceiling.
+
+1. D3D12 textures need ALLOW_RENDER_TARGET plus ALLOW_SIMULTANEOUS_ACCESS for
+   D3D11 OpenSharedResource1. Without the render-target flag it returns E_INVALIDARG.
+2. Shared simultaneous-access resources decay to COMMON at command-list boundaries;
+   tag the state that exists at Present, then fence Streamline's input consumption
+   before D3D11 overwrites those resources.
+3. ELEX resizes, then calls SetFullscreenState. Its old blt swap chain permits
+   this; D3D12 flip presentation requires another ResizeBuffers. Missing that
+   refresh produces a black screen with working audio and DXGI_ERROR_INVALID_CALL.
+   Refresh even if fullscreen is temporarily unavailable: Streamline discards
+   proxy buffers before the native call and a failed call can leave them null.
+   Reject a null backbuffer before GPU commands to prevent a device-removal error.
+4. The timer increment at RVA51cb0 begins the next simulation frame. Pair its
+   frame token with rendering, constants and present markers. Never hold the
+   token lock across ReflexSleep.
+5. Shut down Streamline plugins before graphics teardown, but retain the
+   interposer module until proxy COM objects are released. Unloading first
+   leaves invalid vtables and crashes on exit.
+6. Hidden/unfocused test windows disable interpolation.150 successful synthetic
+   presents prove bridge operation, not generated output. Inspect live counts.
+7. Driver-forced VSync overrides custom Dynamic targets. Leave driver profiles
+   alone and document NVIDIA's behavior; do not invent a mod-side multiplier loop.
+
+RTX5090/621.01 reported native Dynamic supported (up to5 generated frames), and
+live gameplay reached Dynamic mode with generated output and no status errors.
+User verified normal rendering and the retained cloud fix. Exact target accuracy
+and quantitative performance still require VSync-off measurement.

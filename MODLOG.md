@@ -202,3 +202,115 @@ Only install a concrete reviewed prototype after the required confirmation.
 - GitHub remote access failed twice with 'could not read Username'; normal and
   escalated shell have no credential helper. No remote workflow run or release
   has been created. Changes can be pushed from an authenticated Git client.
+
+## Frame generation request (in progress)
+
+- User requests DLSS Frame Generation, Dynamic output-FPS targeting (example122)
+  and a configurable maximum multiplier. Existing Super Resolution must remain.
+- Official NGX310.9.16 SDK contains D3D12/Vulkan FG; direct D3D11 FG absent.
+  Public NGX API exposes MultiFrameCount/Index and device MultiFrameCountMax.
+  Application is responsible for generation ordering, presentation and pacing.
+- Streamline main commit625db07d4bca5abc67d781c42af7e7fb0761f1b6 examined locally:
+  eDynamic and dynamicTargetFrameRate supported for D3D12; numFramesToGenerate is
+  ignored in eDynamic. Public options have no custom dynamic multiplier ceiling.
+- User confirmed NVIDIA native Dynamic MFG specifically, then removed the
+  multiplier-ceiling requirement. Implement eDynamic + configurable output FPS,
+  default122. No custom scheduler and no NVIDIA driver-profile cap writes.
+- Official Streamline SDK v2.14.16 archive downloaded and SHA256 verified:
+  32041e51db0cab709a271b72a352281b690c2abbd669a827809401a5dd23956b.
+  Production DLLs and release headers extracted under ignored .deps/StreamlineSDK.
+- Proposed implementation: D3D11 virtual backbuffer behind an IDXGISwapChain
+  adapter; shared color/depth/MV/HUDless textures and shared fences; native
+  Streamline D3D12 swapchain owns frame generation and presentation. Reflex
+  markers must track real frame boundaries. Test capability/interop first.
+- Engine timer/frame object getter RVA51d40; frame number at object+0x54,
+  getter RVA51b10. Further tracing required for a proper simulation-start hook.
+- Latest installed SR runtime was user-changed310.9.1.0, differing from packaged
+ 310.9.16.0. Do not overwrite that independently changed file without resolving
+  installer/update manifest compatibility. FG testing authorization and game
+  control were given earlier; prepare concrete build/backups before deployment.
+
+## Native Dynamic MFG bridge (2026-11-03, validation in progress)
+
+- Standalone capability probe passed on RTX5090 / driver621.01: native Dynamic
+  supported; hardware reports up to5 generated frames. No custom ceiling added.
+- Implemented Streamline D3D12 presentation behind the game's D3D11 swap chain,
+  shared color/depth/MV/HUDless resources, cross-API fences, and engine timer
+  RVA51cb0 (inc frame at+0x54) for Reflex simulation start.
+- Fixed D3D11 OpenSharedResource1 E_INVALIDARG by adding ALLOW_RENDER_TARGET
+  alongside ALLOW_SIMULTANEOUS_ACCESS to shared D3D12 textures. All formats open.
+- Fixed cleanup crash: shut down SL plugins first, release proxy COM objects
+  while interposer remains loaded, then unload its module.
+- Synthetic GPU bridge test passed150 frames with clean shutdown. Hidden window
+  correctly disables interpolation, so this is not proof of generated frames.
+  Probe detected NVIDIA driver VSync Force ON; a custom target is ignored under
+  VSync per NVIDIA documentation. Driver settings have not been changed.
+- Full UM snapshots: backups/um/backups/elex-pre-fg-system/20261103-010638.zip,
+  elex-pre-fg-saves/20261103-010640.zip, elex-pre-fg-config/20261103-010641.zip.
+- Test installed20261103-010757. Individual previous files and manifest in
+  backups/fg-test-20261103-010757. Exact deployment record build/fg-deployment.json.
+  Existing user SR310.9.1.0 and DLSSD left in place; existing FG310.9.16.0 matches
+  official Streamline SDK hash. Five SL production DLLs added. Installed INI has
+  Quality plus FrameGeneration Mode=Dynamic,TargetFPS=122. Manifest not yet
+  updated pending validation. Steam launch issued; live validation is next.
+- Still required: working live FG, SR/menu/toggle/shutdown regression checks,
+  installer/settings/rollback/package/CI updates, documentation and packaging.
+
+## Dynamic MFG live fixes and beta package (2026-11-03)
+
+- Fixed fullscreen startup in two stages. ELEX calls ResizeBuffers before
+  SetFullscreenState, so flip presentation needs another resize before Present.
+  A later launch returned DXGI_ERROR_NOT_CURRENTLY_AVAILABLE from fullscreen;
+  Streamline had discarded its proxy buffers even on failure. Rebuild after
+  either result and reject null GetBuffer outputs before submitting GPU copies.
+- User confirmed the corrected screen renders and gameplay looks normal. They
+  initially reported cloud flicker, then confirmed the cloud fix is still applied
+  and we are good. Both cloud and water APPLIED records are present.
+- Shared guides are tagged COMMON, their actual state across simultaneous-access
+  command-list boundaries. Native input-consumption fence protects D3D11 reuse.
+  Engine frame hook must be ready before enabling FG; invalid inputs disable it.
+- Final DLAA test PID4696:10689 presents,4 reported generated frames, clean
+  shutdown; F10 disabled/re-enabled both SR and FG, pause/resume checked.
+  User confirmed screen renders correctly. No persistent native status error.
+- Final Quality beta PID16648:4483 presents,1 reported generated frame,
+  >3000 successful2560x1440->3840x2160 SR evaluations, clean shutdown.
+  Steady diagnostic rate approximately117FPS; native Dynamic mostly selects
+  no interpolation near the target. These runs do not demonstrate a sustained
+  performance gain or an exact122FPS target. Initial driver VSync Force ON
+  makes NVIDIA ignore custom targets; driver profiles were not modified.
+- Build/installed version0.2.0-beta.1. Quality/Dynamic/TargetFPS122 restored.
+  Install manifest updated for every runtime. User-changed SR310.9.1.0 and
+  pre-existing FG310.9.16.0 are marked RetainOnRollback; DLSSD left untouched.
+  Tested prior build/INI/log/manifest in backups/fg-validated-20261103-012905.
+- Added checksum-pinned production Streamline fetch and runtime manifest,
+  independent section-aware SR/FG settings helpers, all runtime install/rollback
+  handling, release workflow dependency download, four Streamline license notices.
+- Tests: native C/C++ build,150-frame hidden bridge, hardware/WARP unrelated
+  dispatch and swap-chain forwarding, installer/settings/rollback fixtures,
+  partial FG-copy failure cleanup, PowerShell syntax, actionlint and package
+  verification passed. Fixed pre-existing fixture failure-injection scoping so
+  the rollback tests now genuinely exercise copy failures.
+- Built dist/ELEX-DLSS-0.2.0-beta.1-Windows-x64.zip, Source.zip and SHA256SUMS.
+  Package whitelist/hash/version checks passed. UM lint:64 source files and26
+  binary-package files, zero failures/warnings. No game content packaged.
+- Remaining before final handoff: short final gameplay recording/inspection,
+  checkpoint source commit. No GitHub push/release attempted (known missing auth).
+
+## Final Dynamic MFG handoff (2026-11-03)
+
+- Final additional Quality run PID9284:14938 presents,12 reported generated
+  frames, native status0, clean shutdown. Smooth camera sweep recorded with
+  game-process-only audio.23-second1920x1080/60fps MP4 exported to
+  dist/ELEX-DLSS-0.2.0-beta.1-Gameplay.mp4 and contact sheet inspected.
+- Installed/build DLL SHA256:
+  035f593c7bdcf3a0b8aefe6f6b1c42642cc626cb9e09f44160f6a4ab0106d469.
+  ELEX closed normally. Active INI remains Quality,Dynamic,122; no ceiling.
+- Driver VSync Force ON was also confirmed in this final run. Exact122FPS
+  targeting requires the user's VSync override off; no driver setting changed.
+  Native Dynamic generally selected no extra frames at the observed~117FPS.
+- Added explicit retained-runtime rollback fixture; passed. Capability and
+  bridge diagnostics now both build through tools/build-fg-tests.ps1.
+- All requested implementation, local installation, tests and release packaging
+  completed as beta. Native scheduling remains NVIDIA-owned. Performance gain
+  and frame pacing are not benchmarked, and broader scene/hardware coverage is
+  still unverified. Source checkpoint is local; no GitHub publish was performed.

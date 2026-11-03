@@ -1,11 +1,15 @@
 [CmdletBinding()]
 param(
     [ValidateSet('DLAA','Quality','Balanced','Performance')][string]$Mode = 'Quality',
+    [ValidateSet('Off','Dynamic')][string]$FrameGeneration = 'Dynamic',
+    [ValidateRange(0,1000)][double]$TargetFPS = 122,
     [string]$Game = 'C:\Program Files (x86)\Steam\steamapps\common\ELEX',
     [string]$ConfigPath,
     [switch]$Apply
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'settings.ps1')
+if([double]::IsNaN($TargetFPS) -or [double]::IsInfinity($TargetFPS)){throw 'TargetFPS must be finite'}
 $root = Split-Path -Parent $PSScriptRoot
 $system = Join-Path $Game 'system'
 $config = if ($ConfigPath) { [IO.Path]::GetFullPath($ConfigPath) } else { Join-Path $env:LOCALAPPDATA 'ELEX\Config\ConfigUser.xml' }
@@ -17,9 +21,13 @@ if ($exeHash -ne '7fe4f4c5a463f7b428ef74d8fe07445f734ff0dc0ad1005ed50cab34bc7f0f
 }
 $source = Join-Path $root 'build\d3d11.dll'
 $runtime = Join-Path $root '.deps\DLSS\lib\Windows_x86_64\rel\nvngx_dlss.dll'
+$fgDirectory = Join-Path $root '.deps\StreamlineSDK\bin\x64'
+$template = Join-Path $root 'elex-dlss.ini'
 if (Test-Path -LiteralPath (Join-Path $root 'system\d3d11.dll')) {
     $source = Join-Path $root 'system\d3d11.dll'
     $runtime = Join-Path $root 'system\nvngx_dlss.dll'
+    $fgDirectory = Join-Path $root 'system'
+    $template = Join-Path $root 'system\elex-dlss.ini'
 }
 $proxy = Join-Path $system 'd3d11.dll'
 $ini = Join-Path $system 'elex-dlss.ini'
@@ -34,10 +42,12 @@ if ($proxyExisted) {
         throw 'An unknown graphics wrapper is installed. Resolve that conflict before installing DLSS. No files changed.'
     }
 }
-foreach ($target in @($ini,$installedRuntime)) {
+$fgSpec = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'streamline-runtime.json') -Raw | ConvertFrom-Json
+$fgNames = @($fgSpec.files.PSObject.Properties.Name)
+foreach ($target in (@($ini,$installedRuntime)+@($fgNames | ForEach-Object {Join-Path $system $_}))) {
     if (Test-Path -LiteralPath $target) { throw "Existing file would be replaced: $target" }
 }
-foreach ($file in @($source,$runtime,$config)) {
+foreach ($file in (@($source,$runtime,$config,$template)+@($fgNames | ForEach-Object {Join-Path $fgDirectory $_}))) {
     if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing required file: $file" }
 }
 $originalConfig = [IO.File]::ReadAllBytes($config)
@@ -65,8 +75,13 @@ $files = @(
     @{ Source=$source; Target=$proxy; Sha256=(Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant() },
     @{ Source=$runtime; Target=$installedRuntime; Sha256=(Get-FileHash -LiteralPath $runtime).Hash.ToLowerInvariant() }
 )
+foreach ($name in $fgNames) {
+    $fgSource = Join-Path $fgDirectory $name
+    $files += @{Source=$fgSource;Target=(Join-Path $system $name);Sha256=(Get-FileHash -LiteralPath $fgSource).Hash.ToLowerInvariant()}
+}
 $files | ForEach-Object { Write-Output ("Install {0} -> {1} SHA256={2}" -f $_.Source,$_.Target,$_.Sha256) }
 Write-Output "Mode=$Mode; in-game AA=TSMAA; existing supported graphics DLL and configuration will be preserved."
+Write-Output "FrameGeneration=$FrameGeneration; native Dynamic output target=$TargetFPS FPS (0=display refresh); no multiplier ceiling."
 if (-not $Apply) { Write-Output 'Dry run only. Use -Apply after review.'; return }
 $backup = Join-Path $root ('backups\install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Path $backup -ErrorAction Stop | Out-Null
@@ -80,8 +95,11 @@ $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestFile -En
 $iniWritten = $false
 try {
     foreach ($file in $files) { Copy-Item -LiteralPath $file.Source -Destination $file.Target }
-    "[DLSS]`r`nMode=$Mode`r`n" | Set-Content -LiteralPath $ini -Encoding ASCII
+    Copy-Item -LiteralPath $template -Destination $ini
     $iniWritten = $true
+    Set-ElexIniValue $ini 'DLSS' 'Mode' $Mode
+    Set-ElexIniValue $ini 'FrameGeneration' 'Mode' $FrameGeneration
+    Set-ElexIniValue $ini 'FrameGeneration' 'TargetFPS' $TargetFPS.ToString('0.######',[Globalization.CultureInfo]::InvariantCulture)
     $manifest.IniSha256 = (Get-FileHash -LiteralPath $ini).Hash.ToLowerInvariant()
     [IO.File]::WriteAllBytes($config,$encoding.GetBytes($updatedText))
     foreach ($file in $files) {
@@ -98,8 +116,10 @@ try {
     } elseif ((Test-Path -LiteralPath $proxy) -and (Get-FileHash -LiteralPath $proxy).Hash.ToLowerInvariant() -eq $files[0].Sha256) {
         Remove-Item -LiteralPath $proxy
     }
-    if ((Test-Path -LiteralPath $installedRuntime) -and (Get-FileHash -LiteralPath $installedRuntime).Hash.ToLowerInvariant() -eq $files[1].Sha256) {
-        Remove-Item -LiteralPath $installedRuntime
+    foreach ($file in $files | Select-Object -Skip 1) {
+        if ((Test-Path -LiteralPath $file.Target) -and (Get-FileHash -LiteralPath $file.Target).Hash.ToLowerInvariant() -eq $file.Sha256) {
+            Remove-Item -LiteralPath $file.Target
+        }
     }
     if ($iniWritten -and (Test-Path -LiteralPath $ini) -and (Get-FileHash -LiteralPath $ini).Hash.ToLowerInvariant() -eq $manifest.IniSha256) {
         Remove-Item -LiteralPath $ini

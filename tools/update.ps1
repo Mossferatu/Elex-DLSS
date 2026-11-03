@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param([ValidateSet('','DLAA','Quality','Balanced','Performance')][string]$Mode = '')
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'settings.ps1')
 $root = Split-Path -Parent $PSScriptRoot
 $manifestPath = Join-Path $root 'backups\installed.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
@@ -18,7 +19,7 @@ $record[0].Sha256 = (Get-FileHash -LiteralPath $source).Hash.ToLowerInvariant()
 if ((Get-FileHash -LiteralPath $proxy).Hash.ToLowerInvariant() -ne $record[0].Sha256) { throw 'Update hash mismatch' }
 if ($Mode) {
     $ini = Join-Path $system 'elex-dlss.ini'
-    "[DLSS]`r`nMode=$Mode`r`n" | Set-Content -LiteralPath $ini -Encoding ASCII
+    Set-ElexIniValue $ini 'DLSS' 'Mode' $Mode
     $manifest.Mode = $Mode
     $manifest.IniSha256 = (Get-FileHash -LiteralPath $ini).Hash.ToLowerInvariant()
 }

@@ -76,6 +76,9 @@ jobs:
           if (-not (Test-Path -LiteralPath $compiler)) { throw 'Zig compiler missing from archive.' }
           Split-Path -Parent $compiler | Out-File $env:GITHUB_PATH -Append -Encoding utf8
 
+      - name: Fetch checksum-verified Streamline production SDK
+        run: .\tools\fetch-streamline.ps1
+
       - name: Test release tooling
         run: .\tests\release-tools.ps1
 

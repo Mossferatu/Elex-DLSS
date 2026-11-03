@@ -15,6 +15,17 @@ if ((Get-FileHash -LiteralPath $runtime).Hash.ToLowerInvariant() -ne 'd00b5b0ab2
     throw 'Unexpected NVIDIA runtime; verify SDK provenance before packaging.'
 }
 Copy-Item -LiteralPath $runtime -Destination (Join-Path $stage 'system\nvngx_dlss.dll')
+$fgSpec = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'streamline-runtime.json') -Raw | ConvertFrom-Json
+foreach ($file in $fgSpec.files.PSObject.Properties) {
+    $fgSource = Join-Path $root ('.deps\StreamlineSDK\bin\x64\'+$file.Name)
+    if ((Get-FileHash -LiteralPath $fgSource).Hash.ToLowerInvariant() -ne $file.Value) { throw "Unexpected Streamline runtime: $($file.Name)" }
+    Copy-Item -LiteralPath $fgSource -Destination (Join-Path $stage 'system')
+}
+$fgLicenses=Join-Path $stage 'third_party\streamline'
+New-Item -ItemType Directory -Path $fgLicenses | Out-Null
+foreach ($name in $fgSpec.licenses) {
+    Copy-Item -LiteralPath (Join-Path $root ('.deps\StreamlineSDK\'+$name)) -Destination $fgLicenses
+}
 Copy-Item -LiteralPath (Join-Path $root 'elex-dlss.ini') -Destination (Join-Path $stage 'system\elex-dlss.ini')
 $Version | Set-Content -LiteralPath (Join-Path $stage 'VERSION.txt') -Encoding ASCII
 $Version | Set-Content -LiteralPath (Join-Path $sourceStage 'VERSION.txt') -Encoding ASCII
@@ -22,7 +33,7 @@ foreach ($file in @('README.md','CHANGELOG.md','LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination $stage
     Copy-Item -LiteralPath (Join-Path $root $file) -Destination $sourceStage
 }
-foreach ($file in @('install.ps1','rollback.ps1','set-mode.ps1')) {
+foreach ($file in @('install.ps1','rollback.ps1','set-mode.ps1','set-frame-generation.ps1','settings.ps1','streamline-runtime.json')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $stage 'tools')
 }
 Copy-Item -LiteralPath (Join-Path $root 'third_party\cloud-water\LICENSE.txt') -Destination (Join-Path $stage 'third_party\cloud-water')
@@ -41,7 +52,7 @@ Compress-Archive -Path (Join-Path $sourceStage '*') -DestinationPath $sourceZip 
 $hashes = foreach ($item in @($binaryZip,$sourceZip)) {
     (Get-FileHash -LiteralPath $item).Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($item)
 }
-foreach ($name in @('d3d11.dll','nvngx_dlss.dll')) {
+foreach ($name in (@('d3d11.dll','nvngx_dlss.dll')+@($fgSpec.files.PSObject.Properties.Name))) {
     $hashes += (Get-FileHash -LiteralPath (Join-Path $stage "system\$name")).Hash.ToLowerInvariant() + "  system/$name"
 }
 $hashes | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ASCII

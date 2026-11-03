@@ -25,14 +25,18 @@ $runtime = Join-Path $system 'nvngx_dlss.dll'
 if (@($manifest.Files | Where-Object { [IO.Path]::GetFullPath($_.Target) -eq $runtime }).Count -ne 1) {
     throw 'NGX runtime not present in the verified manifest'
 }
-Write-Output 'Restore the prior graphics DLL when present, otherwise remove the mod proxy; remove the installed NGX runtime and unchanged mod INI; restore prior AA configuration.'
+Write-Output 'Restore the prior graphics DLL when present, otherwise remove the mod proxy; remove mod-owned NVIDIA/Streamline runtimes and unchanged INI; restore prior AA configuration.'
 if (-not $Apply) { Write-Output 'Dry run. Use -Apply after review.'; return }
 if ($proxyExisted) {
     Copy-Item -LiteralPath $proxyBackup -Destination (Join-Path $system 'd3d11.dll')
 } else {
     Remove-Item -LiteralPath (Join-Path $system 'd3d11.dll')
 }
-Remove-Item -LiteralPath $runtime
+foreach ($entry in $manifest.Files) {
+    if ([IO.Path]::GetFullPath($entry.Target) -eq (Join-Path $system 'd3d11.dll')) { continue }
+    if ($entry.RetainOnRollback) { Write-Output "Retained pre-existing user runtime: $($entry.Target)" }
+    else { Remove-Item -LiteralPath $entry.Target }
+}
 if ((Get-FileHash -LiteralPath $ini).Hash.ToLowerInvariant() -eq $manifest.IniSha256) { Remove-Item -LiteralPath $ini }
 if ((Get-FileHash -LiteralPath $manifest.Config).Hash.ToLowerInvariant() -eq $manifest.ConfigAfterSha256) {
     Copy-Item -LiteralPath (Join-Path $manifest.Backup 'ConfigUser.xml') -Destination $manifest.Config

@@ -11,6 +11,7 @@
 #include "renderer.h"
 #include "ngx_backend.h"
 #include "engine_hooks.h"
+#include "frame_generation.h"
 #include "../third_party/minhook/include/MinHook.h"
 #include "../build/shaders.h"
 
@@ -125,6 +126,7 @@ static HRESULT STDMETHODCALLTYPE map_buffer(ID3D11DeviceContext *ctx,ID3D11Resou
 {
     MapFn original=(MapFn)context_original((void *)ctx->lpVtbl->Map);
     if(!original)return E_UNEXPECTED;
+    if(!internal_call&&ready)elex_fg_render_start();
     HRESULT hr=original(ctx,resource,sub,type,flags,mapped);
     if (internal_call || FAILED(hr) || !mapped || sub || type==D3D11_MAP_READ) return hr;
     D3D11_RESOURCE_DIMENSION kind;
@@ -371,6 +373,10 @@ static bool replace_resolve(ID3D11DeviceContext *ctx)
     ID3D11DeviceContext_CSSetShaderResources(ctx,0,1,&dlss_output.srv);
     ID3D11DeviceContext_CSSetUnorderedAccessViews(ctx,0,1,&target,NULL);
     original_dispatch(ctx,(od.Width+7)/8,(od.Height+7)/8,1);
+    ID3D11Resource *hudless=NULL;
+    ID3D11UnorderedAccessView_GetResource(target,&hudless);
+    elex_fg_capture(ctx,input_depth.texture,input_motion.texture,hudless,frame_globals,reset);
+    DROP(hudless);
     reset_history=false;last_evaluation_tick=now;last_evaluated_frame=frame_index;
     memcpy(previous_camera,frame_globals+140,sizeof(previous_camera));
     applied=true;
@@ -531,6 +537,10 @@ HRESULT elex_renderer_init(ID3D11Device *device,RendererLog logger,HMODULE modul
     DROP(device1);DROP(ctx);
     ready=SUCCEEDED(hr);
     if(ready)elex_engine_hooks(module,logger);
+    if(ready&&elex_engine_frame_hook_ready()) {
+        HRESULT fg=elex_fg_install(device,logger,module);
+        if(FAILED(fg))logger("Frame-generation bridge initialization failed: 0x%08lx; Super Resolution retained",(unsigned long)fg);
+    }
     logger("ELEX DLSS renderer %s: 0x%08lx. F10 toggles DLSS at the temporal pass.",ready?"ready":"unavailable",(unsigned long)hr);
     return hr;
 }
