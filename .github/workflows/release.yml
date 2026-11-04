@@ -83,12 +83,16 @@ jobs:
         run: |
           .\tests\release-tools.ps1
           .\tests\nvidia-presets.ps1
+          .\tools\test-indicator.ps1
+          .\tools\test-graphics-hooks.ps1
+          .\tools\test-pipeline-state.ps1
 
       - name: Build native DLL and package end-user files
         env:
           PACKAGE_VERSION: ${{ steps.version.outputs.version }}
         run: |
           .\build.ps1 -Version $env:PACKAGE_VERSION
+          .\tools\test-proxy-reentry.ps1
           .\tools\package.ps1 -Version $env:PACKAGE_VERSION
 
       - name: Verify archives and checksums

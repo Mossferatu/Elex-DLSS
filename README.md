@@ -16,7 +16,8 @@ Ray reconstruction is not implemented.
 - Exact SMAA T2x shader recognition, raw scene color before SMAA and the HUD.
 - Engine D24 depth, camera and skinned-character motion, with character jitter
   removed from motion and motion converted to DLSS's direction and pixel scale.
-- Native NGX D3D11 evaluation and full context-state restoration.
+- Native NGX D3D11 evaluation and explicit pipeline-state restoration, including
+  ranged constant buffers and UAV counters, without changing D3D10/11 emulation.
 - Guarded render-scale and Halton-jitter engine hooks for the exact supported
   executable; no game executable is changed on disk.
 - F10 toggles DLSS at the temporal resolve. Unknown shaders retain engine rendering.
@@ -64,6 +65,49 @@ F10 switches the temporal reconstruction off/on for comparison while keeping the
 selected internal render scale. It does not switch Quality mode back to native 4K.
 Frame generation also pauses while F10 disables DLSS, because its temporal
 inputs are captured at that pass.
+
+### Native on-screen DLSS indicator
+
+`[DLSS] Indicator=On` is the default. NVIDIA's own HUD displays the runtime's
+selected preset, DLSS runtime version and rendering/output resolutions. Unlike
+the configured preset hint, this identifies the model the runtime actually uses,
+including NVIDIA App/driver overrides. It appears while the DLSS pass evaluates.
+
+Set `Indicator=Off` to hide it for ELEX, or `Indicator=Driver` to leave NVIDIA's
+existing indicator setting alone. Restart after changing this option:
+
+```powershell
+.\tools\set-mode.ps1 -Indicator On
+.\tools\set-mode.ps1 -Indicator Off
+```
+
+This affects only the running mod: it supplies the indicator's registry-read
+value inside the ELEX process. It does not edit the Windows registry or change
+the indicator in other games. No RTSS installation is required for this HUD.
+
+### RTSS compatibility
+
+The SR-only path was tested with RTSS7.3.5.28211 on the test system at High
+detection, with Stealth mode and Custom Direct3D support both off and both on.
+Those two options were not required for the visible overlay on this system.
+The previous missing-OSD issue was reproduced; the corrected build shows RTSS FPS
+and the native NVIDIA indicator together while DLSS evaluates.
+
+With Dynamic MFG enabled, gameplay and the native NVIDIA indicator also worked,
+and RTSS recorded D3D12 statistics, but RTSS's on-screen FPS text was not visible.
+The verified RTSS OSD fix therefore applies to `FrameGeneration/Mode=Off`.
+
+The mod now preserves pipeline bindings explicitly instead of switching device
+context emulation, which made RTSS treat the D3D11 game as D3D10. Hook forwarding
+also retains its original function when overlays wrap a context's vtable, and
+feature-level-10 probe devices are excluded from renderer initialization.
+Recursive loader/device probes are covered by a bounded regression test.
+
+The reporter's exact startup hang was not reproduced locally. Their RTSS version
+and GPU were not supplied, so this is not a compatibility guarantee for every
+RTSS/driver combination. The mod does not modify RTSS profiles. When reporting a
+remaining problem, include RTSS version, GPU/driver, FG mode, and the current
+`elex-dlss.log` startup section.
 
 ### Native Dynamic MFG
 
@@ -210,8 +254,9 @@ and enter a version. That produces a downloadable Actions artifact only.
 
 GitHub-hosted runners do not provide the RTX hardware or ELEX installation used
 for gameplay validation. CI compiles the DLL and tests packaging/installer
-behavior; it does not run the GPU probe or prove that a new renderer change works
-in game. See [GitHub's release-event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release).
+behavior, indicator isolation, wrapped graphics hooks, and WARP pipeline state
+and startup reentry. It does not run the NVIDIA GPU probe or prove that a new
+renderer change works in game. See [GitHub's release-event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release).
 
 ## Build and test locally
 
@@ -232,9 +277,14 @@ To reproduce versioned release assets locally:
 
 ```powershell
 .\tests\release-tools.ps1
-.\build.ps1 -Zig 'C:\Tools\zig\zig.exe' -Version 0.2.0-beta.1
-.\tools\package.ps1 -Version 0.2.0-beta.1
-python .\tools\verify-package.py --version 0.2.0-beta.1
+.\tests\nvidia-presets.ps1
+.\tools\test-indicator.ps1 -Zig 'C:\Tools\zig\zig.exe'
+.\tools\test-graphics-hooks.ps1 -Zig 'C:\Tools\zig\zig.exe'
+.\tools\test-pipeline-state.ps1 -Zig 'C:\Tools\zig\zig.exe'
+.\build.ps1 -Zig 'C:\Tools\zig\zig.exe' -Version 0.2.0-beta.3
+.\tools\test-proxy-reentry.ps1 -Zig 'C:\Tools\zig\zig.exe'
+.\tools\package.ps1 -Version 0.2.0-beta.3
+python .\tools\verify-package.py --version 0.2.0-beta.3
 ```
 
 The packager rejects a version that differs from the last successful DLL build.
@@ -267,6 +317,9 @@ directory. Subsequent independent game-configuration edits are preserved.
   corrections applied, output inspected.
 - Native hardware and WARP smoke tests: unrelated shader execution and
   device/swap-chain forwarding passed.
+- RTSS7.3.5 SR-only overlay and NVIDIA's native preset/resolution HUD inspected
+  together. Normal hooks and Stealth/Custom Direct3D both tested; see the RTSS
+  section for the FG overlay limitation and unreplicated startup-hang report.
 - Live DLAA and Quality: thousands of successful evaluations with history kept
   across frames; camera movement, walking, HUD, pause/resume and F10 tested.
 - Native Dynamic MFG: hardware capability confirmed,150-frame synthetic bridge

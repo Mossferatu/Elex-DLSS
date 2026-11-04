@@ -31,7 +31,7 @@ try {
     python tools\embed_shaders.py
     if ($LASTEXITCODE -ne 0) { throw 'Shader embedding failed' }
     $frameGenerationObjects=@()
-    foreach($source in @('streamline_backend','frame_generation')) {
+    foreach($source in @('streamline_backend','frame_generation','graphics_hooks')) {
         $object="build\$source.o"
         & $compiler c++ -target x86_64-windows-gnu -std=c++17 -fms-extensions -O2 -Wall -Wextra -Werror `
             -Wno-cast-function-type-mismatch -I (Join-Path $streamlinePath 'include') -c "src\$source.cpp" -o $object
@@ -44,7 +44,7 @@ try {
     & $compiler cc -target x86_64-windows-gnu -std=c11 -O2 -Wall -Wextra -Werror `
         -Wno-cast-function-type-mismatch -I (Join-Path $sdkPath 'include') -I third_party\cloud-water `
         @rendererArgs `
-        -shared src\d3d11.c src\renderer.c src\engine_hooks.c src\ngx_backend.c build\ngx-parameters.obj @frameGenerationObjects src\d3d11.def `
+        -shared src\d3d11.c src\renderer.c src\engine_hooks.c src\ngx_backend.c src\indicator.c src\pipeline_state.c build\ngx-parameters.obj @frameGenerationObjects src\d3d11.def `
         third_party\cloud-water\patch.c third_party\cloud-water\water.c `
         third_party\minhook\src\buffer.c third_party\minhook\src\hook.c `
         third_party\minhook\src\trampoline.c third_party\minhook\src\hde\hde64.c `

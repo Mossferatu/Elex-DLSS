@@ -12,7 +12,7 @@ anti_cheat: "None detected; single-player game"
 status: working
 agents: ["Codex (GPT-6)"]
 humans: []
-date: 2026-11-02
+date: 2026-11-04
 links: ["https://github.com/NVIDIA/DLSS", "https://renderdoc.org/"]
 tags: ["dlss", "d3d11", "temporal-aa", "deferred-contexts"]
 ---
@@ -152,3 +152,38 @@ RTX5090/621.01 reported native Dynamic supported (up to5 generated frames), and
 live gameplay reached Dynamic mode with generated output and no status errors.
 User verified normal rendering and the retained cloud fix. Exact target accuracy
 and quantitative performance still require VSync-off measurement.
+
+## RTSS compatibility and native NVIDIA HUD
+
+RTSS7.3.5.28211 reproduced the missing FPS overlay with the original SR-only
+mod; the same installation displayed FPS in unmodded ELEX. The reporter's exact
+Stealth/Custom Direct3D startup hang was not reproduced on this hardware.
+
+1. RTSS creates a feature-level-10 probe before ELEX's feature-level-11 device.
+   Exclude it from graphics hooks and renderer selection. Failed preparation
+   must release partial resources so a later real device can initialize.
+2. An overlay can wrap a context's vtable after an inline hook is installed.
+   Looking up the trampoline through the current vtable lost the original Map
+   function in a live trace. Use a distinct compiled thunk per hooked target,
+   retaining that target's original function independently of the current vtable.
+3. Create/SwapDeviceContextState changes D3D10/11 API emulation. RTSS classified
+   the modded game as D3D10 and omitted its OSD. Explicit D3D11 pipeline capture
+   and restoration corrected classification and restored the visible OSD.
+   Preserve ranged constant-buffer bindings, shader class instances, stream
+   output positions and UAV counters as well as the common graphics bindings.
+4. A loader hook can re-enter the proxy's device factory during native DLL load.
+   Return a transient failure instead of waiting on the same thread's INIT_ONCE;
+   forward nested device probes without attaching the renderer to them.
+5. NVIDIA's own HUD can report actual runtime preset and resolutions. Override
+   only this process's read of ShowDlssIndicator under the precise HKLM NGXCore
+   key, with On=0x400, Off=0 and Driver leaving the value alone. Do not write the
+   global registry. Check both A/W read APIs, type flags and buffer-size rules.
+
+WARP pipeline roundtrip (including ranged buffers and append counter7), wrapped
+hook forwarding, loader/device reentry, and indicator isolation tests pass.
+Live High-detection SR-only checks passed with Stealth/Custom Direct3D both on
+and both off. NVIDIA's HUD showed preset K and 2560x1440 to 3840x2160, including
+the NVIDIA App runtime override. Dynamic MFG still rendered correctly and
+reported native status0, but RTSS's FPS text was absent on that D3D12 path even
+though RTSS statistics were available. Keep that limit distinct from the
+verified SR-only OSD fix. Broader RTSS versions and GPUs remain unverified.

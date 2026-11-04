@@ -33,6 +33,8 @@ static CreateDeviceSwapFn create_device_swap;
 static WCHAR log_path[MAX_PATH];
 static HRESULT init_result = E_FAIL;
 static LONG error_shown, examined, applied;
+static _Thread_local unsigned device_call_depth;
+static _Thread_local BOOL loading_native;
 
 #ifdef ELEX_REPLAY_TEST
 __declspec(dllexport) HRESULT elex_replay_attach(ID3D11Device *device);
@@ -95,7 +97,9 @@ static BOOL CALLBACK initialize(PINIT_ONCE init, PVOID parameter, PVOID *context
         return TRUE;
     }
     wcscat(path, L"\\d3d11.dll");
+    loading_native=TRUE;
     HMODULE native = LoadLibraryW(path);
+    loading_native=FALSE;
     if (!native) {
         init_result = HRESULT_FROM_WIN32(GetLastError());
         return TRUE;
@@ -114,6 +118,9 @@ static BOOL CALLBACK initialize(PINIT_ONCE init, PVOID parameter, PVOID *context
 
 static HRESULT ensure_initialized(void)
 {
+    // Overlay loaders may probe our exports while the native DLL is loading.
+    // Re-entering this thread's INIT_ONCE would wait for itself indefinitely.
+    if(loading_native)return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
     if (!InitOnceExecuteOnce(&once, initialize, NULL, NULL))
         init_result = HRESULT_FROM_WIN32(GetLastError());
     if (FAILED(init_result)) report_failure("initialization", init_result);
@@ -166,6 +173,11 @@ static HRESULT STDMETHODCALLTYPE hooked_compute(ID3D11Device *device, const void
 
 static HRESULT hook_device(ID3D11Device *device)
 {
+    // D3D10/overlay capability probes also enter the D3D11 factory. They are
+    // not ELEX's renderer and must keep their original device/context paths.
+    if(ID3D11Device_GetFeatureLevel(device)<D3D_FEATURE_LEVEL_11_0){
+        log_message("Skipping graphics hooks for feature-level-10 probe device %p",device);return S_OK;
+    }
     void **table = *(void ***)device;
     HRESULT hr = S_OK;
     AcquireSRWLockExclusive(&hooks_lock);
@@ -230,17 +242,21 @@ HRESULT WINAPI elex_create_device(IDXGIAdapter *adapter, D3D_DRIVER_TYPE type,
     HMODULE software, UINT flags, const D3D_FEATURE_LEVEL *levels, UINT level_count,
     UINT sdk, ID3D11Device **device, D3D_FEATURE_LEVEL *chosen, ID3D11DeviceContext **context)
 {
+    unsigned depth=++device_call_depth;
     HRESULT hr = ensure_initialized();
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {--device_call_depth;if(device)*device=NULL;if(context)*context=NULL;return hr;}
     hr = create_device(adapter, type, software, flags, levels, level_count, sdk,
         device, chosen, context);
-    if (SUCCEEDED(hr)) {
+    log_message("D3D11CreateDevice result=0x%08lx depth=%u thread=%lu flags=0x%x device=%p",(unsigned long)hr,depth,GetCurrentThreadId(),flags,device?*device:NULL);
+    if (SUCCEEDED(hr)&&depth==1) {
         HRESULT hooked = hook_outputs(device, context);
         if (FAILED(hooked)) {
             release_outputs(device, context);
+            --device_call_depth;
             return hooked;
         }
     }
+    --device_call_depth;
     return hr;
 }
 
@@ -249,11 +265,13 @@ HRESULT WINAPI elex_create_device_and_swap_chain(IDXGIAdapter *adapter, D3D_DRIV
     UINT sdk, const DXGI_SWAP_CHAIN_DESC *desc, IDXGISwapChain **swap, ID3D11Device **device,
     D3D_FEATURE_LEVEL *chosen, ID3D11DeviceContext **context)
 {
+    unsigned depth=++device_call_depth;
     HRESULT hr = ensure_initialized();
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {--device_call_depth;if(device)*device=NULL;if(context)*context=NULL;if(swap)*swap=NULL;return hr;}
     hr = create_device_swap(adapter, type, software, flags, levels, level_count, sdk,
         desc, swap, device, chosen, context);
-    if (SUCCEEDED(hr)) {
+    log_message("D3D11CreateDeviceAndSwapChain result=0x%08lx depth=%u thread=%lu flags=0x%x device=%p",(unsigned long)hr,depth,GetCurrentThreadId(),flags,device?*device:NULL);
+    if (SUCCEEDED(hr)&&depth==1) {
         HRESULT hooked = hook_outputs(device, context);
         if (FAILED(hooked)) {
             if (swap && *swap) {
@@ -261,9 +279,11 @@ HRESULT WINAPI elex_create_device_and_swap_chain(IDXGIAdapter *adapter, D3D_DRIV
                 *swap = NULL;
             }
             release_outputs(device, context);
+            --device_call_depth;
             return hooked;
         }
     }
+    --device_call_depth;
     return hr;
 }
 

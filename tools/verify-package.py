@@ -54,6 +54,7 @@ require(hashlib.sha256(binary['system/nvngx_dlss.dll']).hexdigest() == RUNTIME_S
         'Unverified NVIDIA runtime')
 require(b'Mode=Quality' in binary['system/elex-dlss.ini'], 'Missing default Quality configuration')
 require(b'Preset=Default' in binary['system/elex-dlss.ini'], 'Missing default SR preset configuration')
+require(b'Indicator=On' in binary['system/elex-dlss.ini'], 'Missing native indicator default')
 require(b'[FrameGeneration]' in binary['system/elex-dlss.ini'] and b'Mode=Dynamic' in binary['system/elex-dlss.ini']
         and b'TargetFPS=122' in binary['system/elex-dlss.ini'], 'Missing native Dynamic MFG configuration')
 require(json.loads(binary['tools/streamline-runtime.json']) == STREAMLINE, 'Runtime manifest mismatch')

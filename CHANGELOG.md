@@ -1,12 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.2.0-beta.3 - 2026-11-04
+
+- Native NVIDIA on-screen indicator, enabled by default, with process-local
+  On/Off/Driver control and no global NVIDIA registry changes.
+- Fix RTSS OSD compatibility by preserving D3D11 pipeline state without changing
+  API emulation, and forwarding graphics hooks through stable original functions.
+- Ignore feature-level-10 overlay probes; guard recursive device/loader startup.
+- RTSS7.3.5 OSD verified with FG off, in normal and Stealth/Custom Direct3D modes.
+  Dynamic MFG rendering passes, but RTSS text was not visible on that path.
+
+## 0.2.0-beta.2 - 2026-11-03
 
 - User-selectable SR/DLAA model presets, independent of resolution mode.
 - ELEX-only NVIDIA FG model-preset helper (A/B/C/Latest), with readback, saved
   previous settings and restoration through Default or rollback.
 - Retain the shader compiler DLL while its returned bytecode objects are alive;
   fixes standalone startup without a preloaded compiler module.
+
+## 0.2.0-beta.1 - 2026-11-03
+
 - Native NVIDIA Dynamic Multi Frame Generation through a D3D11/D3D12 presentation
   bridge, with Reflex and configurable output FPS (default122), without a multiplier ceiling.
 - Fix fullscreen startup by refreshing flip-model buffers after ELEX's mode switch.

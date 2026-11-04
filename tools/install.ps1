@@ -2,6 +2,7 @@
 param(
     [ValidateSet('DLAA','Quality','Balanced','Performance')][string]$Mode = 'Quality',
     [ValidateSet('Default','E','F','J','K','L','M')][string]$Preset = 'Default',
+    [ValidateSet('On','Off','Driver')][string]$Indicator = 'On',
     [ValidateSet('Off','Dynamic')][string]$FrameGeneration = 'Dynamic',
     [ValidateRange(0,1000)][double]$TargetFPS = 122,
     [string]$Game = 'C:\Program Files (x86)\Steam\steamapps\common\ELEX',
@@ -100,6 +101,7 @@ try {
     $iniWritten = $true
     Set-ElexIniValue $ini 'DLSS' 'Mode' $Mode
     Set-ElexIniValue $ini 'DLSS' 'Preset' $Preset
+    Set-ElexIniValue $ini 'DLSS' 'Indicator' $Indicator
     Set-ElexIniValue $ini 'FrameGeneration' 'Mode' $FrameGeneration
     Set-ElexIniValue $ini 'FrameGeneration' 'TargetFPS' $TargetFPS.ToString('0.######',[Globalization.CultureInfo]::InvariantCulture)
     $manifest.IniSha256 = (Get-FileHash -LiteralPath $ini).Hash.ToLowerInvariant()

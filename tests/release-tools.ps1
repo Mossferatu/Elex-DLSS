@@ -97,6 +97,11 @@ Assert-True ($presetText.Contains('Preset=M') -and $presetText.Contains('Mode=DL
 Assert-True ([IO.File]::ReadAllText($iniPath).Contains('Preset=M')) 'Quality edit preserves preset'
 & (Join-Path $clean.Package 'tools\set-mode.ps1') -Mode DLAA | Out-Null
 Assert-Throws { & (Join-Path $clean.Package 'tools\set-mode.ps1') -Preset G } 'Reject reserved SR preset'
+& (Join-Path $clean.Package 'tools\set-mode.ps1') -Indicator Off | Out-Null
+$indicatorText=[IO.File]::ReadAllText($iniPath)
+Assert-True ($indicatorText.Contains('Indicator=Off') -and $indicatorText.Contains('Preset=M') -and $indicatorText.Contains('Mode=Dynamic') -and $indicatorText.Contains('Mode=DLAA')) 'Indicator edit preserves preset and modes'
+& (Join-Path $clean.Package 'tools\set-mode.ps1') -Indicator Driver | Out-Null
+Assert-True ([IO.File]::ReadAllText($iniPath).Contains('Indicator=Driver')) 'Driver-controlled indicator supported'
 & (Join-Path $clean.Package 'tools\set-frame-generation.ps1') -Mode Dynamic -TargetFPS 122.5 | Out-Null
 $iniText=[IO.File]::ReadAllText($iniPath)
 Assert-True ($iniText.Contains('TargetFPS=122.5') -and $iniText.Contains('Mode=DLAA')) 'FG target edit preserves SR mode'

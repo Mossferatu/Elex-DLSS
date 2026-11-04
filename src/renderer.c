@@ -12,6 +12,9 @@
 #include "ngx_backend.h"
 #include "engine_hooks.h"
 #include "frame_generation.h"
+#include "indicator.h"
+#include "graphics_hooks.h"
+#include "pipeline_state.h"
 #include "../third_party/minhook/include/MinHook.h"
 #include "../build/shaders.h"
 
@@ -37,10 +40,6 @@ static DispatchFn original_dispatch;
 static ExecuteFn original_execute;
 static DeferredFn original_deferred;
 static Deferred1Fn original_deferred1;
-typedef struct {void *target,*original;} ContextHook;
-static ContextHook context_hooks[64];
-static LONG context_hook_count;
-static SRWLOCK context_hooks_lock=SRWLOCK_INIT;
 static RendererLog log_line;
 static SRWLOCK maps_lock = SRWLOCK_INIT;
 static MappedBuffer mappings[256];
@@ -48,7 +47,7 @@ static _Thread_local bool internal_call;
 static ID3D11Device *render_device;
 static ID3D11DeviceContext *render_context;
 static ID3D11DeviceContext1 *context1;
-static ID3DDeviceContextState *clean_state;
+static UINT pipeline_uav_count=D3D11_PS_CS_UAV_REGISTER_COUNT;
 static ID3D11ComputeShader *prepare_cs, *output_cs;
 static ID3D11PixelShader *motion_ps;
 static HMODULE shader_compiler;
@@ -66,13 +65,6 @@ static unsigned long long frame_index, last_evaluated_frame;
 static DWORD last_evaluation_tick;
 static float previous_camera[3];
 static LONG object_corrections, fallback_reports, globals_reports, map_reports;
-
-static void *context_original(void *target)
-{
-    LONG count=InterlockedCompareExchange(&context_hook_count,0,0);
-    for(LONG i=0;i<count;++i)if(context_hooks[i].target==target)return context_hooks[i].original;
-    return NULL;
-}
 
 #define DROP(x) do { if (x) { IUnknown_Release((IUnknown *)(x)); (x)=NULL; } } while (0)
 
@@ -122,11 +114,10 @@ static UINT pixel_tag(ID3D11DeviceContext *context, ID3D11PixelShader **shader)
     return tag;
 }
 
-static HRESULT STDMETHODCALLTYPE map_buffer(ID3D11DeviceContext *ctx,ID3D11Resource *resource,
+static HRESULT STDMETHODCALLTYPE map_buffer(void *original_fn,ID3D11DeviceContext *ctx,ID3D11Resource *resource,
     UINT sub,D3D11_MAP type,UINT flags,D3D11_MAPPED_SUBRESOURCE *mapped)
 {
-    MapFn original=(MapFn)context_original((void *)ctx->lpVtbl->Map);
-    if(!original)return E_UNEXPECTED;
+    MapFn original=(MapFn)original_fn;
     if(!internal_call&&ready)elex_fg_render_start();
     HRESULT hr=original(ctx,resource,sub,type,flags,mapped);
     if (internal_call || FAILED(hr) || !mapped || sub || type==D3D11_MAP_READ) return hr;
@@ -145,7 +136,7 @@ static HRESULT STDMETHODCALLTYPE map_buffer(ID3D11DeviceContext *ctx,ID3D11Resou
     return hr;
 }
 
-static void STDMETHODCALLTYPE unmap_buffer(ID3D11DeviceContext *ctx,ID3D11Resource *resource,UINT sub)
+static void STDMETHODCALLTYPE unmap_buffer(void *original_fn,ID3D11DeviceContext *ctx,ID3D11Resource *resource,UINT sub)
 {
     if(!internal_call && !sub) {
         BufferShadow shadow={0};
@@ -158,7 +149,7 @@ static void STDMETHODCALLTYPE unmap_buffer(ID3D11DeviceContext *ctx,ID3D11Resour
         ReleaseSRWLockExclusive(&maps_lock);
         if(shadow.size)ID3D11Resource_SetPrivateData(resource,&shadow_key,sizeof(shadow.size)+shadow.size,&shadow);
     }
-    UnmapFn original=(UnmapFn)context_original((void *)ctx->lpVtbl->Unmap);
+    UnmapFn original=(UnmapFn)original_fn;
     if(original)original(ctx,resource,sub);
 }
 
@@ -264,10 +255,9 @@ void elex_draw(ID3D11DeviceContext *ctx,ElexDrawFn original,UINT count,UINT star
     DROP(shader);
 }
 
-static void STDMETHODCALLTYPE draw_indexed(ID3D11DeviceContext *ctx,UINT count,UINT start,INT base)
+static void STDMETHODCALLTYPE draw_indexed(void *original_fn,ID3D11DeviceContext *ctx,UINT count,UINT start,INT base)
 {
-    IndexedFn original=(IndexedFn)context_original((void *)ctx->lpVtbl->DrawIndexed);
-    if(!original)return;
+    IndexedFn original=(IndexedFn)original_fn;
     if(internal_call||!ready) {
         original(ctx,count,start,base);return;
     }
@@ -280,10 +270,9 @@ static void STDMETHODCALLTYPE draw_indexed(ID3D11DeviceContext *ctx,UINT count,U
     DROP(shader);
 }
 
-static HRESULT STDMETHODCALLTYPE finish_list(ID3D11DeviceContext *ctx,BOOL restore,ID3D11CommandList **list)
+static HRESULT STDMETHODCALLTYPE finish_list(void *original_fn,ID3D11DeviceContext *ctx,BOOL restore,ID3D11CommandList **list)
 {
-    FinishFn original=(FinishFn)context_original((void *)ctx->lpVtbl->FinishCommandList);
-    if(!original)return E_UNEXPECTED;
+    FinishFn original=(FinishFn)original_fn;
     DeferredFrame frame;UINT size=sizeof(frame);
     HRESULT captured=ID3D11DeviceContext_GetPrivateData(ctx,&frame_key,&size,&frame);
     HRESULT hr=original(ctx,restore,list);
@@ -347,8 +336,9 @@ static bool replace_resolve(ID3D11DeviceContext *ctx)
     float jx=(frame_globals[34]-frame_globals[82])*cd.Width*.5f;
     float jy=-(frame_globals[38]-frame_globals[86])*cd.Height*.5f;
     internal_call=true;
-    ID3DDeviceContextState *saved=NULL;
-    ID3D11DeviceContext1_SwapDeviceContextState(context1,clean_state,&saved);
+    ElexPipelineState saved;
+    elex_pipeline_save(ctx,context1,pipeline_uav_count,&saved);
+    ID3D11DeviceContext_ClearState(ctx);
     if(!ngx)ngx=elex_ngx_open(render_device,runtime_dir,data_dir,log_line);
     if(!ngx){backend_failed=true;elex_engine_set_enabled(false);goto restore;}
     if(!resize_surfaces(cd.Width,cd.Height,od.Width,od.Height)||
@@ -382,9 +372,7 @@ static bool replace_resolve(ID3D11DeviceContext *ctx)
     memcpy(previous_camera,frame_globals+140,sizeof(previous_camera));
     applied=true;
 restore:
-    ID3D11DeviceContext_ClearState(ctx);
-    ID3D11DeviceContext1_SwapDeviceContextState(context1,saved,NULL);
-    DROP(saved);
+    elex_pipeline_restore(ctx,context1,&saved);
     internal_call=false;
 finish:
     DROP(motion);DROP(target);
@@ -454,33 +442,13 @@ static HRESULT hook(void *target,void *replacement,void **original)
     return status==MH_OK?S_OK:E_FAIL;
 }
 
-static HRESULT hook_context_method(void *target,void *replacement)
-{
-    AcquireSRWLockExclusive(&context_hooks_lock);
-    LONG count=context_hook_count;
-    for(LONG i=0;i<count;++i)if(context_hooks[i].target==target) {
-        ReleaseSRWLockExclusive(&context_hooks_lock);return S_OK;
-    }
-    if(count>=64){ReleaseSRWLockExclusive(&context_hooks_lock);return E_OUTOFMEMORY;}
-    ContextHook *entry=&context_hooks[count];
-    MH_STATUS status=MH_CreateHook(target,replacement,&entry->original);
-    if(status==MH_OK) {
-        entry->target=target;
-        InterlockedExchange(&context_hook_count,count+1);
-        status=MH_EnableHook(target);
-    }
-    ReleaseSRWLockExclusive(&context_hooks_lock);
-    if(status!=MH_OK)log_line("Context hook failed: %s",MH_StatusToString(status));
-    return status==MH_OK?S_OK:E_FAIL;
-}
-
 static HRESULT hook_context(ID3D11DeviceContext *ctx)
 {
-    HRESULT hr=hook_context_method((void *)ctx->lpVtbl->Map,(void *)map_buffer);
-    if(SUCCEEDED(hr))hr=hook_context_method((void *)ctx->lpVtbl->Unmap,(void *)unmap_buffer);
-    if(SUCCEEDED(hr))hr=hook_context_method((void *)ctx->lpVtbl->DrawIndexed,(void *)draw_indexed);
+    HRESULT hr=elex_hook_graphics((void *)ctx->lpVtbl->Map,ELEX_HOOK_MAP,(void *)map_buffer);
+    if(SUCCEEDED(hr))hr=elex_hook_graphics((void *)ctx->lpVtbl->Unmap,ELEX_HOOK_UNMAP,(void *)unmap_buffer);
+    if(SUCCEEDED(hr))hr=elex_hook_graphics((void *)ctx->lpVtbl->DrawIndexed,ELEX_HOOK_INDEXED,(void *)draw_indexed);
     if(SUCCEEDED(hr)&&ID3D11DeviceContext_GetType(ctx)==D3D11_DEVICE_CONTEXT_DEFERRED)
-        hr=hook_context_method((void *)ctx->lpVtbl->FinishCommandList,(void *)finish_list);
+        hr=elex_hook_graphics((void *)ctx->lpVtbl->FinishCommandList,ELEX_HOOK_FINISH,(void *)finish_list);
     return hr;
 }
 
@@ -507,12 +475,18 @@ static HRESULT STDMETHODCALLTYPE create_deferred1(ID3D11Device1 *device,UINT fla
 HRESULT elex_renderer_init(ID3D11Device *device,RendererLog logger,HMODULE module)
 {
     if(ready||render_device)return S_OK;
+    logger("DLSS device candidate: %p feature=0x%x flags=0x%x",device,ID3D11Device_GetFeatureLevel(device),ID3D11Device_GetCreationFlags(device));
+    if(ID3D11Device_GetFeatureLevel(device)<D3D_FEATURE_LEVEL_11_0){logger("Skipping non-D3D11-capable probe device");return S_FALSE;}
     log_line=logger;
     UINT len=GetModuleFileNameW(module,runtime_dir,MAX_PATH);
     if(!len||len>=MAX_PATH)return E_FAIL;
     wchar_t *slash=wcsrchr(runtime_dir,L'\\');if(!slash)return E_FAIL;*slash=0;
     if(wcslen(runtime_dir)+12>=MAX_PATH)return E_FAIL;
     wcscpy(data_dir,runtime_dir);wcscat(data_dir,L"\\elex-dlss");CreateDirectoryW(data_dir,NULL);
+    wchar_t ini[MAX_PATH];
+    if(swprintf(ini,MAX_PATH,L"%ls\\elex-dlss.ini",runtime_dir)<0)return E_FAIL;
+    HRESULT indicator=elex_indicator_install(ini,logger);
+    if(FAILED(indicator))logger("Native DLSS indicator unavailable: 0x%08lx",(unsigned long)indicator);
     render_device=device;ID3D11Device_AddRef(device);
     ID3D11Device1 *device1=NULL;ID3D11DeviceContext *ctx=NULL;
     ID3D11Device_GetImmediateContext(device,&ctx);
@@ -520,10 +494,14 @@ HRESULT elex_renderer_init(ID3D11Device *device,RendererLog logger,HMODULE modul
     HRESULT hr=ID3D11Device_QueryInterface(device,&IID_ID3D11Device1,(void **)&device1);
     if(SUCCEEDED(hr))hr=ID3D11DeviceContext_QueryInterface(ctx,&IID_ID3D11DeviceContext1,(void **)&context1);
     D3D_FEATURE_LEVEL level=ID3D11Device_GetFeatureLevel(device);
-    if(SUCCEEDED(hr))hr=ID3D11Device1_CreateDeviceContextState(device1,0,&level,1,D3D11_SDK_VERSION,&IID_ID3D11Device,NULL,&clean_state);
+    pipeline_uav_count=level>=D3D_FEATURE_LEVEL_11_1?D3D11_1_UAV_SLOT_COUNT:D3D11_PS_CS_UAV_REGISTER_COUNT;
     internal_call=true;
     if(SUCCEEDED(hr))hr=shaders_init(device);
     internal_call=false;
+    if(FAILED(hr)){
+        logger("DLSS device preparation failed: 0x%08lx; later devices may retry",(unsigned long)hr);
+        DROP(device1);DROP(ctx);elex_renderer_shutdown();return hr;
+    }
     if(SUCCEEDED(hr))hr=hook_context(ctx);
     if(SUCCEEDED(hr))hr=hook((void *)ctx->lpVtbl->ExecuteCommandList,(void *)execute_list,(void **)&original_execute);
     if(SUCCEEDED(hr))hr=hook((*(void ***)ctx)[41],(void *)dispatch,(void **)&original_dispatch);
@@ -554,6 +532,6 @@ void elex_renderer_shutdown(void)
     ready=false;elex_ngx_close(ngx);ngx=NULL;
     release_surface(&input_color);release_surface(&input_depth);release_surface(&input_motion);release_surface(&dlss_output);
     DROP(scene_color);DROP(scene_depth);DROP(motion_ps);DROP(prepare_cs);DROP(output_cs);
-    DROP(clean_state);DROP(context1);DROP(render_context);DROP(render_device);
+    DROP(context1);DROP(render_context);DROP(render_device);
     if(shader_compiler){FreeLibrary(shader_compiler);shader_compiler=NULL;}
 }

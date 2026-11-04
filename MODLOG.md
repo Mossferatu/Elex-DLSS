@@ -363,3 +363,102 @@ Only install a concrete reviewed prototype after the required confirmation.
   a nonfunctional Streamline INI option. Default restores saved previous values;
   no saved override means leave current NVIDIA settings alone. Existing Dynamic
   target122 and absence of a multiplier ceiling retained. Source remains local.
+
+## RTSS feedback and native indicator (in progress)
+
+- Reddit reporter: RTSS overlay absent even at High detection; Stealth mode plus
+  Custom Direct3D support hangs startup only with the mod. User clarified the
+  reporter used the original SR-only version, not the FG build. Focus on D3D11
+  startup/hook interactions, not Streamline. Reporter RTSS/GPU version unknown.
+- User authorized RTSS test installation after initially declining. Signed MSI
+  bundled RTSS7.3.5.28211 installed in .tools/rtss-installed; global detection off,
+  ELEX.exe only High + stealth + custom Direct3D; no FPS limiter. RTSS PID2608,
+  loader64 PID4020. Windows autostart remains unset. Stop test processes afterward.
+- A preceding portable extraction exited before injection (invalid test); normal
+  installation starts successfully. ELEX prior baseline files/INI/manifest saved
+  in backups/rtss-20261103-141656, path recorded in build/rtss-test-backup.txt.
+- Current test temporarily installs original SR-only DLL SHA1bd71fd9... and sets
+  FG Off. Restore beta2 from that backup before final install/handoff. Current
+  installation manifest intentionally still describes beta2 while testing baseline.
+- Native NVIDIA indicator implemented in src/indicator.c, pending live check.
+  [DLSS] Indicator=On/Off/Driver overrides only the process's read of the precise
+  HKLM NGXCore ShowDlssIndicator DWORD. No registry writes or DLL byte patches.
+  Native runtime draws actual model/resolution. Four A/W registry-read APIs,
+  exact key checks via NtQueryKey, buffer sizing/type handling tested.
+- tools/test-indicator.ps1 passes On/Off/Driver, A/W reads, short buffers,
+  unrelated-key pass-through and unchanged persistent registry. Native build passes.
+- No confirmed RTSS root cause/fix yet. Suspects: recursive overlay probe device
+  creation and selecting a dummy device before ELEX's real device. A diagnostic
+  thread stack reader exists only in ignored build/thread-stacks.{c,exe}.
+
+## RTSS root causes and verified indicator (2026-11-04)
+
+- Original SR-only build with RTSS injected launched but showed no RTSS FPS.
+  Unmodded ELEX with identical RTSS settings showed its orange FPS. F10 did not
+  restore the original mod's OSD. RTSS statistics remain available in shared memory.
+- Diagnostic capture found RTSS creating a FL10 probe via D3D11CreateDeviceAndSwapChain
+  (flags0x40000000) before ELEX's FL11 device. The probe could poison renderer init
+  with E_INVALIDARG. Skip all graphics hooks below FL11; failed preparation can retry.
+- Actual COMPAT map-original-missing entries occurred on RTSS's wrapped context.
+  Replaced mutable-vtable original-function lookup with per-target C++ detour thunks
+  in src/graphics_hooks.cpp, used by Map/Unmap/DrawIndexed/FinishCommandList and the
+  water Draw/CreatePixelShader hooks. Six signatures/multiple targets pass tests.
+- That removed mapping failure but RTSS still classified the game D3D10 (flags
+  0x10006) and showed no FPS. Removing Create/SwapDeviceContextState and preserving
+  D3D11 pipeline state explicitly restored D3D11 classification0x10007 and RTSS FPS.
+  Native NVIDIA HUD is visible simultaneously: Render Preset K, runtime310.9.16
+  (NVIDIA App override),2560x1440->3840x2160. Screenshots inspected.
+- High detection + Stealth + Custom Direct3D: live PID15088, >28000 successful SR
+  evaluations, native FPS OSD visible, normal exit. Log rtss-high-stealth-custom-pass.log
+  and screenshot rtss-manual-state.png are in ignored build/. Exact reporter hang
+  not reproduced; do not claim every RTSS version/GPU is verified.
+- Standalone tests pass: pipeline state roundtrip on WARP including ranged CBs
+  and append-UAV counter7; stable wrapped-context hook forwarding; native indicator
+  A/W reads, buffer limits and registry isolation; real loader/device reentry
+  simulation with outer-device selection. Production settings helpers include
+  Indicator=On/Off/Driver; tests are being added to release CI.
+- RTSS normal-hook-mode and FG regression checks remain, then final installation,
+  packaging and stopping RTSS. Registered RTSS lives in .tools/rtss-installed;
+  do not treat that directory as a disposable cache while installed.
+
+## RTSS validation and beta3 installation (2026-11-04)
+
+- Normal RTSS hooks (High detection, Stealth=0, Custom Direct3D=0) passed with
+  PID1588 and >10200 SR evaluations. Both orange FPS and NVIDIA's native HUD
+  visible in build/rtss-normal-focused.png; the two extra options are not
+  required on this system. The earlier minimized capture is not valid evidence.
+- Dynamic regression PID8548 completed11523 real presents and22 native generated
+  frames, status0, normal exit. Both cloud/water APPLIED entries present; screenshot
+  build/rtss-fg-start.png inspected. RTSS recorded D3D12 statistics (0x10008), but
+  its FPS text was not visible. Scope the verified OSD fix to SR-only Mode=Off.
+  NVIDIA's preset/resolution HUD stayed visible with FG. Driver VSync remains
+  Force ON, so this run does not verify the custom122FPS target or performance.
+- Built and installed0.2.0-beta.3, proxy SHA256
+  71fbeb88fafc06df900d61d0fe1b7fa12b7d057758b1912eb9bba57f307acfee.
+  Backup: backups/rtss-validated-20261104-105233. Final startup reentry test passes.
+  Reconciled backups/installed.json to the final proxy and active INI. All tracked
+  installed-file hashes match; user's SR310.9.1 runtime and retained FG runtime
+  are unchanged. Existing independent DLSSD was not touched.
+- Final beta3 SR-only PID4188 completed>7200 evaluations with cloud/water fixes
+  applied, native indicator visible, and normal exit. A24.25-second1080p/60fps
+  game-only-audio recording was captured for the indicator demonstration.
+- User closed RTSS before the final recording; it was left closed. That clip
+  demonstrates NVIDIA's HUD only. Use the earlier screenshots for RTSS OSD proof.
+  ELEX, RTSS and RTSSHooksLoader64 are now closed; RTSS autostart is unset.
+  Registered RTSS installation remains in .tools/rtss-installed.
+- Active game INI restored to Quality, Preset=Default, Indicator=On,
+  FrameGeneration Mode=Dynamic, TargetFPS=122. No multiplier ceiling. Both setting
+  helpers ran successfully against the reconciled manifest; final hashes verified.
+- README/changelog and field note describe the RTSS fixes, native HUD controls,
+  exact tested modes and FG overlay limitation. Workflow includes the four new
+  regression checks. Editor diagnostics and actionlint report no errors.
+- Final Windows/source archives and SHA256SUMS generated for0.2.0-beta.3.
+  Archive whitelist, x64/version/runtime hashes and checksums pass. Universal
+  Modder lint:83 source files (also compared against ELEX),29 distribution files,
+  zero failures/warnings. Binary contents separately checked against the explicit
+  redistribution whitelist so the mod's own installed copies are not mistaken
+  for game assets. Field-note validation reports no errors/warnings.
+- Exported23-second1080p/60fps Native-Indicator.mp4 with game-only audio; final
+  contact sheet inspected. RTSS was closed for this clip, as requested.
+  Public GitHub publishing was not attempted; the existing release workflow will
+  build and attach assets once the user publishes a release containing this code.
