@@ -136,7 +136,25 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           PACKAGE_VERSION: ${{ needs.build.outputs.version }}
         run: |
-          gh release upload "$RELEASE_TAG" \
-            "release-assets/ELEX-DLSS-${PACKAGE_VERSION}-Windows-x64.zip" \
-            "release-assets/ELEX-DLSS-${PACKAGE_VERSION}-Source.zip" \
-            "release-assets/SHA256SUMS.txt" --clobber
+          assets=(
+            "release-assets/ELEX-DLSS-${PACKAGE_VERSION}-Windows-x64.zip"
+            "release-assets/ELEX-DLSS-${PACKAGE_VERSION}-Source.zip"
+            "release-assets/SHA256SUMS.txt"
+          )
+          for asset in "${assets[@]}"; do
+            name="$(basename "$asset")"
+            uploaded=0
+            for attempt in 1 2 3 4 5; do
+              if gh release upload "$RELEASE_TAG" "$asset" --clobber; then
+                uploaded=1
+                break
+              fi
+              echo "Upload attempt $attempt for $name failed; cleaning up partial asset and retrying..."
+              gh release delete-asset "$RELEASE_TAG" "$name" --yes 2>/dev/null || true
+              sleep $((attempt * 5))
+            done
+            if [ "$uploaded" -ne 1 ]; then
+              echo "Failed to upload $name after 5 attempts."
+              exit 1
+            fi
+          done
