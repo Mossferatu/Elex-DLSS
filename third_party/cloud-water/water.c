@@ -13,6 +13,9 @@ typedef void (STDMETHODCALLTYPE *DrawFn)(ID3D11DeviceContext *, UINT, UINT);
 static WaterLogFn log_line;
 static LONG draws_applied;
 static const GUID variant_key = {0x19365a74,0x663f,0x438a,{0x82,0x7e,0x37,0x23,0x99,0x71,0xc5,0xf3}};
+typedef struct { ID3D11PixelShader *shader, *variant; } WaterPair;
+static WaterPair water_pairs[8];
+static volatile LONG water_pair_count;
 
 static HRESULT STDMETHODCALLTYPE pixel_shader(void *original_fn,ID3D11Device *device, const void *data,
     SIZE_T size, ID3D11ClassLinkage *linkage, ID3D11PixelShader **result)
@@ -34,6 +37,16 @@ static HRESULT STDMETHODCALLTYPE pixel_shader(void *original_fn,ID3D11Device *de
     if (SUCCEEDED(patch)) {
         /* The original shader owns the variant, with no global device/shader leak. */
         patch = ID3D11PixelShader_SetPrivateDataInterface(*result, &variant_key, (IUnknown *)variant);
+        if (SUCCEEDED(patch)) {
+            for (LONG i = 0; i < 8; ++i) {
+                if (!water_pairs[i].shader || water_pairs[i].shader == *result) {
+                    water_pairs[i].variant = variant;
+                    water_pairs[i].shader = *result;
+                    if (i >= water_pair_count) InterlockedExchange(&water_pair_count, i + 1);
+                    break;
+                }
+            }
+        }
         ID3D11PixelShader_Release(variant);
     }
     log_line("Water impulse shader SHA256 matched; slot-zero variant %s (0x%08lx)",
@@ -86,12 +99,17 @@ static void STDMETHODCALLTYPE draw(void *original_fn,ID3D11DeviceContext *contex
     ID3D11DepthStencilView *depth = NULL;
     ID3D11BlendState *blend = NULL;
     BOOL applied = FALSE;
-    if (ID3D11DeviceContext_GetType(context) != D3D11_DEVICE_CONTEXT_IMMEDIATE) goto finish;
+    LONG pair_count = water_pair_count;
+    if (!pair_count || ID3D11DeviceContext_GetType(context) != D3D11_DEVICE_CONTEXT_IMMEDIATE) goto finish;
     ID3D11DeviceContext_PSGetShader(context, &shader, NULL, NULL);
     if (!shader) goto finish;
-    UINT size = sizeof(variant);
-    if (FAILED(ID3D11PixelShader_GetPrivateData(shader, &variant_key, &size, &variant)) ||
-        !variant) goto finish;
+    for (LONG i = 0; i < pair_count && i < 8; ++i) {
+        if (water_pairs[i].shader == shader) {
+            variant = water_pairs[i].variant;
+            break;
+        }
+    }
+    if (!variant) goto finish;
     ID3D11DeviceContext_OMGetRenderTargetsAndUnorderedAccessViews(context,
         8, targets, &depth, 0, 8, uavs);
     if (depth || !wave_target(targets[0], DXGI_FORMAT_R16G16B16A16_FLOAT) ||
@@ -127,7 +145,6 @@ finish:
         if (targets[i]) ID3D11RenderTargetView_Release(targets[i]);
         if (uavs[i]) ID3D11UnorderedAccessView_Release(uavs[i]);
     }
-    if (variant) ID3D11PixelShader_Release(variant);
     if (shader) ID3D11PixelShader_Release(shader);
     if (!applied) elex_draw(context, original, count, start);
 }

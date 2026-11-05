@@ -46,7 +46,9 @@ class Bridge final : public IDXGISwapChain4 {
     ID3D12Device *device12{};
     ID3D12Device *proxy_device12{};
     ID3D12CommandQueue *queue{};
-    ID3D12CommandAllocator *allocator{};
+    ID3D12CommandAllocator *allocators[3]{};
+    UINT64 allocator_done[3]{};
+    unsigned allocator_index{};
     ID3D12GraphicsCommandList *commands{};
     ID3D12Fence *fence12{};
     ID3D11Fence *fence11{};
@@ -73,7 +75,7 @@ class Bridge final : public IDXGISwapChain4 {
     SRWLOCK token_lock=SRWLOCK_INIT;
     sl::FrameToken *token{};
     unsigned token_frame{};
-    bool submit_started{};
+    std::atomic<bool> submit_started{false};
     std::atomic<bool> alive{false};
 
     bool wait_cpu(UINT64 value){
@@ -92,11 +94,15 @@ class Bridge final : public IDXGISwapChain4 {
     bool execute(){
         HRESULT hr=commands->Close();if(FAILED(hr))return false;
         ID3D12CommandList *lists[]={commands};queue->ExecuteCommandLists(1,lists);
-        list_done=++fence_value;return SUCCEEDED(queue->Signal(fence12,list_done));
+        list_done=++fence_value;
+        allocator_done[allocator_index]=list_done;
+        allocator_index=(allocator_index+1)%3;
+        return SUCCEEDED(queue->Signal(fence12,list_done));
     }
     bool reset_commands(){
-        if(!wait_cpu(list_done))return false;
-        return SUCCEEDED(allocator->Reset())&&SUCCEEDED(commands->Reset(allocator,nullptr));
+        if(!wait_cpu(allocator_done[allocator_index]))return false;
+        ID3D12CommandAllocator *alloc=allocators[allocator_index];
+        return SUCCEEDED(alloc->Reset())&&SUCCEEDED(commands->Reset(alloc,nullptr));
     }
     bool shared(SharedTexture &out,UINT width,UINT height,DXGI_FORMAT format){
         D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;heap.CreationNodeMask=heap.VisibleNodeMask=1;
@@ -178,8 +184,9 @@ public:
         if(sl.upgrade(reinterpret_cast<void **>(&proxy_device12))!=sl::Result::eOk)return E_FAIL;
         D3D12_COMMAND_QUEUE_DESC q{};q.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
         hr=proxy_device12->CreateCommandQueue(&q,__uuidof(ID3D12CommandQueue),reinterpret_cast<void **>(&queue));
-        if(SUCCEEDED(hr))hr=device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,__uuidof(ID3D12CommandAllocator),reinterpret_cast<void **>(&allocator));
-        if(SUCCEEDED(hr))hr=device12->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator,nullptr,__uuidof(ID3D12GraphicsCommandList),reinterpret_cast<void **>(&commands));
+        for(unsigned i=0;i<3&&SUCCEEDED(hr);++i)
+            hr=device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,__uuidof(ID3D12CommandAllocator),reinterpret_cast<void **>(&allocators[i]));
+        if(SUCCEEDED(hr))hr=device12->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocators[0],nullptr,__uuidof(ID3D12GraphicsCommandList),reinterpret_cast<void **>(&commands));
         if(SUCCEEDED(hr))hr=commands->Close();
         if(SUCCEEDED(hr))hr=device12->CreateFence(0,D3D12_FENCE_FLAG_SHARED,__uuidof(ID3D12Fence),reinterpret_cast<void **>(&fence12));
         HANDLE shared_fence=nullptr;
@@ -222,14 +229,14 @@ public:
             // Reflex may wait for the previous present; never hold token_lock
             // across that wait, since the present thread also consumes it.
             sl.sleep(*next);sl.marker(sl::PCLMarker::eSimulationStart,*next);
-            AcquireSRWLockExclusive(&token_lock);token=next;token_frame=frame;submit_started=false;
+            AcquireSRWLockExclusive(&token_lock);token=next;token_frame=frame;submit_started.store(false,std::memory_order_relaxed);
             ReleaseSRWLockExclusive(&token_lock);
         }
     }
     void render_start(){
-        if(!alive)return;
+        if(!alive.load(std::memory_order_relaxed)||submit_started.load(std::memory_order_relaxed))return;
         AcquireSRWLockExclusive(&token_lock);
-        if(token&&!submit_started){sl.marker(sl::PCLMarker::eSimulationEnd,*token);sl.marker(sl::PCLMarker::eRenderSubmitStart,*token);submit_started=true;}
+        if(token&&!submit_started.load(std::memory_order_relaxed)){sl.marker(sl::PCLMarker::eSimulationEnd,*token);sl.marker(sl::PCLMarker::eRenderSubmitStart,*token);submit_started.store(true,std::memory_order_relaxed);}
         ReleaseSRWLockExclusive(&token_lock);
     }
     void capture(ID3D11DeviceContext *ctx,ID3D11Texture2D *d,ID3D11Texture2D *m,ID3D11Resource *h,const float *g,bool reset){
@@ -427,7 +434,7 @@ Bridge::~Bridge(){
     // Stop plugins before destroying graphics objects, but retain the interposer
     // module until all proxy vtables are no longer needed.
     sl.stop();
-    release_textures();drop(swap);drop(commands);drop(allocator);drop(fence11);drop(fence12);
+    release_textures();drop(swap);drop(commands);for(auto &a:allocators)drop(a);drop(fence11);drop(fence12);
     drop(queue);drop(proxy_device12);sl.close();drop(device12);drop(parent_factory);drop(context11_4);drop(context11);drop(device11_5);drop(device11);
     if(log)log("FG bridge closed: real=%u generated_total=%u",frame_count,generated_count);
     if(fence_event)CloseHandle(fence_event);

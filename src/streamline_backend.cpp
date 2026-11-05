@@ -102,7 +102,7 @@ bool StreamlineBackend::options(bool enabled,float target_fps,UINT width,UINT he
     if(!set_fg_options||!set_reflex_options)return false;
     sl::ReflexOptions reflex{};
     reflex.mode=enabled?sl::ReflexMode::eLowLatency:sl::ReflexMode::eOff;
-    reflex.frameLimitUs=enabled&&target_fps>0?static_cast<uint32_t>(1000000.f/target_fps):0;
+    reflex.frameLimitUs=0;
     sl::Result result=set_reflex_options(reflex);
     if(result!=sl::Result::eOk){log("Reflex options failed: %u",static_cast<unsigned>(result));return false;}
     sl::DLSSGOptions options{};

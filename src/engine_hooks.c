@@ -47,7 +47,7 @@ static float halton(unsigned index, unsigned base)
 static bool get_float(void *self,const char *const *key,float *out,const float *fallback)
 {
     bool found=original_float(self,key,out,fallback);
-    if(key&&*key&&out) {
+    if(active&&key&&*key&&out) {
         if(strcmp(*key,"/Engine/Render/VirtualScreenScale")==0) {
             *out=render_scale;
             if(InterlockedIncrement(&scale_logged)==1)log_line("Engine render scale: %.6f",render_scale);

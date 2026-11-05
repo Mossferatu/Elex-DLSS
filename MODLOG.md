@@ -462,3 +462,18 @@ Only install a concrete reviewed prototype after the required confirmation.
   contact sheet inspected. RTSS was closed for this clip, as requested.
   Public GitHub publishing was not attempted; the existing release workflow will
   build and attach assets once the user publishes a release containing this code.
+
+## DLSS Super Resolution & FG Bridge Performance Optimizations (2026-11-05)
+
+- Eliminated 64 KB stack `memset` (`BufferShadow shadow = {0}`) and `maps_lock` contention on every `Unmap()` across immediate and 15 deferred worker contexts (`src/renderer.c`). `unmap_buffer` now checks `active_mappings > 0` before acquiring `maps_lock` and calls `ID3D11Resource_SetPrivateData` directly from the still-mapped constant buffer pointer before forwarding to `original`.
+- Replaced 64 KB stack allocation in `read_globals` with a two-stage size query (`read_globals_from_buffer`): live ELEX 752-byte `cb_Globals` reads into an uninitialized 1 KB stack buffer, with a `noinline` 64 KB fallback only for oversized capture-replay constant buffers.
+- Eliminated `ID3D11DeviceChild::GetPrivateData` lock contention on every `Draw`, `DrawIndexed`, and `Dispatch` (`src/renderer.c`, `third_party/cloud-water/water.c`) by caching matched shader pointers in small static tables (`matched_ps`, `matched_cs`, `water_pairs`) populated at shader creation time.
+- Deduplicated `cb_Globals` reads and `ID3D11DeviceContext1` `QueryInterface` calls in `prepare_object` / `after_object`: `cb_Globals` is now read and validated at most once per immediate frame or deferred command list rather than on every `TAG_OBJECT` draw (~40x/frame), and `ctx1` is reused across `prepare_object` and `after_object`.
+- Skipped wasted full-screen SMAA neighborhood blend draw (`TAG_NEIGHBOR`) in `elex_draw` when DLSS is active and has valid frame inputs.
+- Reduced DLSS GPU bandwidth and compute overhead in `resize_surfaces` and `replace_resolve`:
+  - Changed `input_color` from 64-bit `DXGI_FORMAT_R16G16B16A16_FLOAT` to 32-bit `DXGI_FORMAT_R8G8B8A8_UNORM` (matching tone-mapped SDR `scene_color`).
+  - Evaluated `NVSDK_NGX_D3D11_EvaluateFeature` directly into `hudless` (`target` UAV resource, `DXGI_FORMAT_R8G8B8A8_UNORM`) when `target` is non-typeless, avoiding the 66.3 MB 4K `dlss_output` texture allocation and skipping the 4K `output_cs` dispatch pass.
+  - Replaced intermediate `ID3D11DeviceContext_ClearState` calls inside `replace_resolve` with targeted `OMSetRenderTargets(0)` and CS SRV/UAV unbinds, and gated `elex_fg_capture` on `elex_fg_is_active()`.
+- Removed the CPU simulation-thread framerate cap in `StreamlineBackend::options` (`src/streamline_backend.cpp`): set `reflex.frameLimitUs = 0` so `slReflexSleep` no longer caps base rendered FPS to `TargetFPS` (122 FPS), allowing DLSS Super Resolution to increase base FPS freely while `options.dynamicTargetFrameRate = target_fps` still governs Dynamic MFG.
+- Replaced the single D3D12 command allocator in `Bridge` (`src/frame_generation.cpp`) with a 3-allocator ring (`allocators[3]`, `allocator_done[3]`) to eliminate per-frame CPU-GPU waits on `list_done` in `reset_commands()`, and added a lock-free atomic fast-path to `Bridge::render_start()`.
+- Built and deployed updated `d3d11.dll` (`SHA256: 41153624bf92c7ae9df1219578854cbff22eebbc9dc1d47f00a0861c8f469f17`) via `tools/update.ps1`; all unit and smoke tests pass.
