@@ -52,7 +52,7 @@ class Bridge final : public IDXGISwapChain4 {
     ID3D12GraphicsCommandList *commands{};
     ID3D12Fence *fence12{};
     ID3D11Fence *fence11{};
-    UINT64 fence_value{},reuse_value{},list_done{};
+    UINT64 fence_value{},reuse_value{},waited_reuse_value{},list_done{};
     HANDLE fence_event{};
     IDXGIFactory1 *parent_factory{};
     IDXGISwapChain4 *swap{};
@@ -243,7 +243,7 @@ public:
         if(!alive||failed||ctx!=context11||!d||!m||!h)return;
         D3D11_TEXTURE2D_DESC desc{};d->GetDesc(&desc);
         if(!guide_size(desc.Width,desc.Height)){failed=true;return;}
-        if(reuse_value)context11_4->Wait(fence11,reuse_value);
+        if(reuse_value&&waited_reuse_value!=reuse_value){context11_4->Wait(fence11,reuse_value);waited_reuse_value=reuse_value;}
         context11->CopyResource(depth.d11,d);context11->CopyResource(motion.d11,m);context11->CopyResource(hudless.d11,h);
         std::memcpy(globals,g,sizeof(globals));reset_requested=reset_requested||reset;frame_ready=true;
         AcquireSRWLockShared(&token_lock);captured_frame=token_frame;ReleaseSRWLockShared(&token_lock);
@@ -288,7 +288,7 @@ public:
             else {failed=true;use_fg=false;generation_enabled=false;sl.options(false,target,color.width,color.height,depth.width,depth.height);}
             reset_requested=true;log("Native Dynamic MFG %s target=%.2f",generation_enabled?"enabled":"disabled",target);
         }
-        if(reuse_value)context11_4->Wait(fence11,reuse_value);
+        if(reuse_value&&waited_reuse_value!=reuse_value){context11_4->Wait(fence11,reuse_value);waited_reuse_value=reuse_value;}
         context11->CopyResource(color.d11,game_buffer);
         UINT64 input_ready=++fence_value;
         HRESULT hr=context11_4->Signal(fence11,input_ready);context11->Flush();

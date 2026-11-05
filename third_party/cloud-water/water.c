@@ -93,23 +93,31 @@ static BOOL additive_pair(ID3D11BlendState *blend)
 static void STDMETHODCALLTYPE draw(void *original_fn,ID3D11DeviceContext *context, UINT count, UINT start)
 {
     DrawFn original = (DrawFn)original_fn;
+    LONG pair_count = water_pair_count;
+    if (!pair_count || ID3D11DeviceContext_GetType(context) != D3D11_DEVICE_CONTEXT_IMMEDIATE) {
+        elex_draw(context, original, count, start);
+        return;
+    }
     ID3D11PixelShader *shader = NULL, *variant = NULL;
+    ID3D11DeviceContext_PSGetShader(context, &shader, NULL, NULL);
+    if (shader) {
+        for (LONG i = 0; i < pair_count && i < 8; ++i) {
+            if (water_pairs[i].shader == shader) {
+                variant = water_pairs[i].variant;
+                break;
+            }
+        }
+    }
+    if (!variant) {
+        if (shader) ID3D11PixelShader_Release(shader);
+        elex_draw(context, original, count, start);
+        return;
+    }
     ID3D11RenderTargetView *targets[8] = {0};
     ID3D11UnorderedAccessView *uavs[8] = {0};
     ID3D11DepthStencilView *depth = NULL;
     ID3D11BlendState *blend = NULL;
     BOOL applied = FALSE;
-    LONG pair_count = water_pair_count;
-    if (!pair_count || ID3D11DeviceContext_GetType(context) != D3D11_DEVICE_CONTEXT_IMMEDIATE) goto finish;
-    ID3D11DeviceContext_PSGetShader(context, &shader, NULL, NULL);
-    if (!shader) goto finish;
-    for (LONG i = 0; i < pair_count && i < 8; ++i) {
-        if (water_pairs[i].shader == shader) {
-            variant = water_pairs[i].variant;
-            break;
-        }
-    }
-    if (!variant) goto finish;
     ID3D11DeviceContext_OMGetRenderTargetsAndUnorderedAccessViews(context,
         8, targets, &depth, 0, 8, uavs);
     if (depth || !wave_target(targets[0], DXGI_FORMAT_R16G16B16A16_FLOAT) ||

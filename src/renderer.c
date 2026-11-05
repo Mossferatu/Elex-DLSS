@@ -140,11 +140,27 @@ static UINT pixel_tag(ID3D11DeviceContext *context, ID3D11PixelShader **shader)
     return 0;
 }
 
+static bool validate_globals_slice(const unsigned char *raw,UINT offset,float values[192],bool report)
+{
+    const float *f=(const float *)(raw+offset*16);
+    if(!isfinite(f[34])||!isfinite(f[38])||f[152]<64||f[153]<32||f[152]>16384||f[153]>16384||
+       fabsf(f[46]-1)>1e-5f||fabsf(f[47])>1e-5f||f[147]<=0||f[139]<=f[147]) {
+        if(report&&InterlockedIncrement(&globals_reports)<=5)log_line("Globals invalid: viewport=%.1f,%.1f P=%.6f,%.6f near/far=%.1f,%.1f",f[152],f[153],f[46],f[47],f[147],f[139]);
+        return false;
+    }
+    float jx=(f[34]-f[82])*f[152]*.5f;
+    float jy=-(f[38]-f[86])*f[153]*.5f;
+    if(fabsf(jx)>.51f||fabsf(jy)>.51f)return false;
+    memset(values,0,768);
+    memcpy(values,f,752);
+    return true;
+}
+
 static HRESULT STDMETHODCALLTYPE map_buffer(void *original_fn,ID3D11DeviceContext *ctx,ID3D11Resource *resource,
     UINT sub,D3D11_MAP type,UINT flags,D3D11_MAPPED_SUBRESOURCE *mapped)
 {
     MapFn original=(MapFn)original_fn;
-    if(!internal_call&&ready)elex_fg_render_start();
+    if(!internal_call&&ready&&ctx==render_context)elex_fg_render_start();
     HRESULT hr=original(ctx,resource,sub,type,flags,mapped);
     if (internal_call || FAILED(hr) || !mapped || sub || type==D3D11_MAP_READ) return hr;
     D3D11_RESOURCE_DIMENSION kind;
@@ -152,7 +168,8 @@ static HRESULT STDMETHODCALLTYPE map_buffer(void *original_fn,ID3D11DeviceContex
     if(kind!=D3D11_RESOURCE_DIMENSION_BUFFER)return hr;
     D3D11_BUFFER_DESC desc;
     ID3D11Buffer_GetDesc((ID3D11Buffer *)resource,&desc);
-    if(!(desc.BindFlags&D3D11_BIND_CONSTANT_BUFFER)||desc.ByteWidth<752)return hr;
+    bool size_ok=elex_engine_frame_hook_ready()?desc.ByteWidth==752:desc.ByteWidth>=752;
+    if(!(desc.BindFlags&D3D11_BIND_CONSTANT_BUFFER)||!size_ok)return hr;
     if(InterlockedIncrement(&map_reports)<=3)log_line("Constant Map: context=%p type=%u bytes=%u",ctx,ID3D11DeviceContext_GetType(ctx),desc.ByteWidth);
     AcquireSRWLockExclusive(&maps_lock);
     for(UINT i=0;i<256;++i) if(!mappings[i].resource) {
@@ -178,8 +195,18 @@ static void STDMETHODCALLTYPE unmap_buffer(void *original_fn,ID3D11DeviceContext
             break;
         }
         ReleaseSRWLockExclusive(&maps_lock);
-        if(mapped_data && mapped_size)
-            ID3D11Resource_SetPrivateData(resource,&shadow_key,mapped_size,mapped_data);
+        if(mapped_data && mapped_size) {
+            if(mapped_size==752) {
+                DeferredFrame frame;
+                if(validate_globals_slice((const unsigned char *)mapped_data,0,frame.globals,false)) {
+                    if(ctx==render_context){memcpy(frame_globals,frame.globals,768);has_globals=true;}
+                    else ID3D11DeviceContext_SetPrivateData(ctx,&frame_key,sizeof(frame),&frame);
+                    ID3D11Resource_SetPrivateData(resource,&shadow_key,mapped_size,mapped_data);
+                }
+            } else {
+                ID3D11Resource_SetPrivateData(resource,&shadow_key,mapped_size,mapped_data);
+            }
+        }
     }
     UnmapFn original=(UnmapFn)original_fn;
     if(original)original(ctx,resource,sub);
@@ -197,27 +224,11 @@ static bool texture_desc(ID3D11View *view,D3D11_TEXTURE2D_DESC *desc)
     return kind==D3D11_RESOURCE_DIMENSION_TEXTURE2D;
 }
 
-static bool validate_globals_slice(const unsigned char *raw,UINT offset,float values[192])
-{
-    const float *f=(const float *)(raw+offset*16);
-    if(!isfinite(f[34])||!isfinite(f[38])||f[152]<64||f[153]<32||f[152]>16384||f[153]>16384||
-       fabsf(f[46]-1)>1e-5f||fabsf(f[47])>1e-5f||f[147]<=0||f[139]<=f[147]) {
-        if(InterlockedIncrement(&globals_reports)<=5)log_line("Globals invalid: viewport=%.1f,%.1f P=%.6f,%.6f near/far=%.1f,%.1f",f[152],f[153],f[46],f[47],f[147],f[139]);
-        return false;
-    }
-    float jx=(f[34]-f[82])*f[152]*.5f;
-    float jy=-(f[38]-f[86])*f[153]*.5f;
-    if(fabsf(jx)>.51f||fabsf(jy)>.51f)return false;
-    memset(values,0,768);
-    memcpy(values,f,752);
-    return true;
-}
-
 static __declspec(noinline) bool read_globals_large(ID3D11Buffer *buffer,UINT size,UINT offset,float values[192])
 {
     unsigned char raw[65536];
     HRESULT hr=ID3D11Buffer_GetPrivateData(buffer,&shadow_key,&size,raw);
-    return SUCCEEDED(hr)&&validate_globals_slice(raw,offset,values);
+    return SUCCEEDED(hr)&&validate_globals_slice(raw,offset,values,true);
 }
 
 static bool read_globals_from_buffer(ID3D11Buffer *buffer,UINT offset,UINT count,float values[192])
@@ -232,7 +243,7 @@ static bool read_globals_from_buffer(ID3D11Buffer *buffer,UINT offset,UINT count
     if(size<=1024) {
         unsigned char raw[1024];
         hr=ID3D11Buffer_GetPrivateData(buffer,&shadow_key,&size,raw);
-        return SUCCEEDED(hr)&&validate_globals_slice(raw,offset,values);
+        return SUCCEEDED(hr)&&validate_globals_slice(raw,offset,values,true);
     }
     return read_globals_large(buffer,size,offset,values);
 }
@@ -328,9 +339,11 @@ static HRESULT STDMETHODCALLTYPE finish_list(void *original_fn,ID3D11DeviceConte
     DeferredFrame frame;UINT size=sizeof(frame);
     HRESULT captured=ID3D11DeviceContext_GetPrivateData(ctx,&frame_key,&size,&frame);
     HRESULT hr=original(ctx,restore,list);
-    if(SUCCEEDED(hr)&&list&&*list&&SUCCEEDED(captured))
-        ID3D11CommandList_SetPrivateData(*list,&frame_key,sizeof(frame),&frame);
-    ID3D11DeviceContext_SetPrivateData(ctx,&frame_key,0,NULL);
+    if(SUCCEEDED(captured)) {
+        if(SUCCEEDED(hr)&&list&&*list)
+            ID3D11CommandList_SetPrivateData(*list,&frame_key,sizeof(frame),&frame);
+        ID3D11DeviceContext_SetPrivateData(ctx,&frame_key,0,NULL);
+    }
     return hr;
 }
 
@@ -456,9 +469,12 @@ static void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext *ctx,UINT x,UINT y,UI
     }
     DROP(shader);
     if(tag==TAG_RESOLVE) {
-        DWORD foreground_pid=0;
-        GetWindowThreadProcessId(GetForegroundWindow(),&foreground_pid);
-        bool down=foreground_pid==GetCurrentProcessId()&&(GetAsyncKeyState(VK_F10)&0x8000)!=0;
+        bool down=(GetAsyncKeyState(VK_F10)&0x8000)!=0;
+        if(down) {
+            DWORD foreground_pid=0;
+            GetWindowThreadProcessId(GetForegroundWindow(),&foreground_pid);
+            down=foreground_pid==GetCurrentProcessId();
+        }
         if(down&&!toggle_held) {
             enabled=!enabled;elex_engine_set_enabled(enabled);reset_history=true;
             log_line("DLSS %s",enabled?"enabled":"disabled");
